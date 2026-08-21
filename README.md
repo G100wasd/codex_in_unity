@@ -1,2 +1,2 @@
 # codex_in_unity
-一个旨在跳过繁琐的mcp操作，让用户可以直接在unity中使用codex
+一个旨在跳过繁琐的mcp操作，让用户可以直接在unity中直接使用codex与其通过mcp获取的对应工具的插件
