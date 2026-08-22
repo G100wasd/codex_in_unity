@@ -11,8 +11,8 @@ public sealed partial class CodexWindow
     private ScrollView conversation, threadList;
     private TextField messageInput;
     private Button sendButton;
-    private Label activeThreadLabel, accountLabel;
-    private VisualElement accountPanel;
+    private Label activeThreadLabel, accountLabel, quotaLabel, mcpLabel, mcpCategoryLabel;
+    private VisualElement accountPanel, mcpPanel, quotaFill, mcpCategories, mcpCategoryPanel;
     private ToolbarMenu modelMenu, effortMenu;
 
     private VisualElement CreateSidebar()
@@ -48,8 +48,21 @@ public sealed partial class CodexWindow
                 paddingTop = 8,
                 paddingBottom = 8
             }
-        }; accountLabel = new Label(); accountPanel.Add(accountLabel); side.Add(accountPanel);
-        side.Add(new Button(ToggleAccountPanel) { text = "◎", tooltip = "查看账户与额度" });
+        };
+        accountLabel = new Label(); accountPanel.Add(accountLabel);
+        quotaLabel = new Label { style = { marginTop = 6, fontSize = 10, opacity = .75f } }; accountPanel.Add(quotaLabel);
+        var quotaTrack = new VisualElement { style = { height = 5, marginTop = 3, backgroundColor = new Color(.09f, .09f, .09f) } };
+        quotaFill = new VisualElement { style = { height = 5, width = Length.Percent(0), backgroundColor = new Color(.30f, .70f, .95f) } };
+        quotaTrack.Add(quotaFill); accountPanel.Add(quotaTrack); side.Add(accountPanel);
+        mcpPanel = new VisualElement { style = { display = DisplayStyle.None, backgroundColor = new Color(.10f, .16f, .20f), paddingLeft = 8, paddingRight = 8, paddingTop = 8, paddingBottom = 8 } };
+        mcpLabel = new Label { style = { whiteSpace = WhiteSpace.Normal, fontSize = 10 } }; mcpPanel.Add(mcpLabel);
+        mcpCategories = new VisualElement { style = { marginTop = 6 } }; mcpPanel.Add(mcpCategories); side.Add(mcpPanel);
+        mcpCategoryPanel = new VisualElement { style = { display = DisplayStyle.None, backgroundColor = new Color(.08f, .13f, .17f), paddingLeft = 8, paddingRight = 8, paddingTop = 8, paddingBottom = 8 } };
+        mcpCategoryLabel = new Label { style = { whiteSpace = WhiteSpace.Normal, fontSize = 10 } }; mcpCategoryPanel.Add(mcpCategoryLabel); side.Add(mcpCategoryPanel);
+        var bottomActions = new VisualElement { style = { flexDirection = FlexDirection.Row, marginTop = 6, height = 22 } };
+        bottomActions.Add(new Button(ToggleAccountPanel) { text = "◎", tooltip = "查看账户与额度", style = { flexGrow = 1, marginRight = 3 } });
+        bottomActions.Add(new Button(ToggleMcpPanel) { text = "⌁", tooltip = "查看 Unity MCP 端口与工具", style = { flexGrow = 1, marginLeft = 3 } });
+        side.Add(bottomActions);
         return side;
     }
     // Creates the visual separator between the sidebar and the main conversation panel.
@@ -125,6 +138,26 @@ public sealed partial class CodexWindow
         return card;
     }
     private static void ResolveApproval(VisualElement card, CodexApprovalRequest request, string decision)
+    {
+        card.SetEnabled(false);
+        request.Respond?.Invoke(decision);
+        card.RemoveFromHierarchy();
+    }
+    private static VisualElement CreateMcpElicitationCard(CodexMcpElicitationRequest request)
+    {
+        var card = new VisualElement { style = { marginTop = 8, marginBottom = 8, paddingLeft = 10, paddingRight = 10, paddingTop = 8, paddingBottom = 8, backgroundColor = new Color(.10f, .18f, .23f) } };
+        card.Add(new Label("Unity MCP 请求") { style = { unityFontStyleAndWeight = FontStyle.Bold } });
+        card.Add(new Label("服务：" + request.ServerName) { style = { opacity = .75f, marginTop = 3 } });
+        card.Add(new Label(string.IsNullOrEmpty(request.Message) ? "Codex 请求继续使用 Unity MCP 工具。" : request.Message) { style = { whiteSpace = WhiteSpace.Normal, marginTop = 4 } });
+        if (!string.IsNullOrEmpty(request.RequestedSchema)) card.Add(new Label("请求数据：" + request.RequestedSchema) { style = { whiteSpace = WhiteSpace.Normal, opacity = .65f, marginTop = 3 } });
+        var actions = new VisualElement { style = { flexDirection = FlexDirection.Row, marginTop = 6 } };
+        actions.Add(new Button(() => ResolveMcpElicitation(card, request, "accept")) { text = "允许本次" });
+        actions.Add(new Button(() => ResolveMcpElicitation(card, request, "decline")) { text = "拒绝" });
+        actions.Add(new Button(() => ResolveMcpElicitation(card, request, "cancel")) { text = "取消" });
+        card.Add(actions);
+        return card;
+    }
+    private static void ResolveMcpElicitation(VisualElement card, CodexMcpElicitationRequest request, string decision)
     {
         card.SetEnabled(false);
         request.Respond?.Invoke(decision);

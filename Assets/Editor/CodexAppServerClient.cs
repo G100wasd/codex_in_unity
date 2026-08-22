@@ -16,8 +16,9 @@ public static class CodexAppServerClient
     private const string AppServerProcessStartTicksKey = "CodexUnity.AppServerProcessStartTicks";
     private static Process sharedProcess;
     private static string sharedCwd;
+    private static string sharedMcpEndpoint;
 
-    public static async Task SendMessageAsync(string cwd, string threadId, string text, string model, string effort, Action<string> onAssistantDelta, Action<CodexApprovalRequest> onApprovalRequested, Action<List<CodexFileChange>> onFileChanges)
+    public static async Task SendMessageAsync(string cwd, string threadId, string text, string model, string effort, Action<string> onAssistantDelta, Action<CodexApprovalRequest> onApprovalRequested, Action<CodexMcpElicitationRequest> onMcpElicitationRequested, Action<List<CodexFileChange>> onFileChanges)
     {
         await RequestGate.WaitAsync();
         try
@@ -28,7 +29,7 @@ public static class CodexAppServerClient
             if (!string.IsNullOrEmpty(effort)) settings += ",\"effort\":\"" + Escape(effort) + "\"";
             var started = await CallAsync(process, 3, "turn/start", "{\"threadId\":\"" + Escape(threadId) + "\",\"cwd\":\"" + Escape(cwd) + "\",\"input\":[{\"type\":\"text\",\"text\":\"" + Escape(text) + "\"}]" + settings + "}");
             var turnId = Text(started.GetProperty("turn"), "id");
-            await ReadAssistantReplyAsync(process, threadId, turnId, onAssistantDelta, onApprovalRequested, onFileChanges);
+            await ReadAssistantReplyAsync(process, threadId, turnId, onAssistantDelta, onApprovalRequested, onMcpElicitationRequested, onFileChanges);
         }
         finally { RequestGate.Release(); }
     }
@@ -96,12 +97,16 @@ public static class CodexAppServerClient
 
     private static async Task<Process> GetSharedProcessAsync(string cwd)
     {
-        if (sharedProcess != null && !sharedProcess.HasExited && sharedCwd == cwd) return sharedProcess;
+        var mcpEndpoint = CodexUnityMcpBridge.Endpoint;
+        if (sharedProcess != null && !sharedProcess.HasExited && sharedCwd == cwd && sharedMcpEndpoint == mcpEndpoint) return sharedProcess;
         StopOwnedAppServer();
-        sharedProcess = await StartAsync(); sharedCwd = cwd;
+        sharedProcess = await StartAsync(mcpEndpoint); sharedCwd = cwd; sharedMcpEndpoint = mcpEndpoint;
         SessionState.SetInt(AppServerProcessIdKey, sharedProcess.Id);
         SessionState.SetString(AppServerProcessStartTicksKey, sharedProcess.StartTime.ToUniversalTime().Ticks.ToString());
         await CallAsync(sharedProcess, 1, "initialize", "{\"clientInfo\":{\"name\":\"codex-unity\",\"version\":\"0.1.0\"}}");
+        UnityDebug.Log(string.IsNullOrEmpty(mcpEndpoint)
+            ? "[Codex Unity] App Server started without a Unity MCP endpoint."
+            : "[Codex Unity] App Server started with Unity MCP endpoint: " + mcpEndpoint);
         return sharedProcess;
     }
 
@@ -132,12 +137,13 @@ public static class CodexAppServerClient
         {
             sharedProcess = null;
             sharedCwd = null;
+            sharedMcpEndpoint = null;
             SessionState.EraseInt(AppServerProcessIdKey);
             SessionState.EraseString(AppServerProcessStartTicksKey);
         }
     }
 
-    private static async Task<Process> StartAsync()
+    private static async Task<Process> StartAsync(string mcpEndpoint)
     {
         var finder = new ProcessStartInfo("powershell.exe", "-NoProfile -NonInteractive -Command \"(Get-AppxPackage -Name OpenAI.Codex | Select-Object -First 1 -ExpandProperty InstallLocation)\"") { UseShellExecute = false, RedirectStandardOutput = true, CreateNoWindow = true };
         using var shell = Process.Start(finder) ?? throw new FileNotFoundException("未找到 Codex 桌面应用。");
@@ -146,9 +152,17 @@ public static class CodexAppServerClient
         // The App Server launches sibling helpers (such as codex-code-mode-host.exe) by relative path.
         // Keep its process directory at the installed resources folder; each request supplies the Unity project cwd explicitly.
         var info = new ProcessStartInfo(exe) { WorkingDirectory = Path.GetDirectoryName(exe), UseShellExecute = false, RedirectStandardInput = true, RedirectStandardOutput = true, StandardInputEncoding = new UTF8Encoding(false), StandardOutputEncoding = new UTF8Encoding(false), CreateNoWindow = true };
+        if (!string.IsNullOrEmpty(mcpEndpoint))
+        {
+            // This is a command-line configuration override, not a write to ~/.codex/config.toml.
+            info.ArgumentList.Add("--config");
+            info.ArgumentList.Add("mcp_servers.unity_editor.url=\"" + EscapeToml(mcpEndpoint) + "\"");
+        }
         info.ArgumentList.Add("app-server"); info.ArgumentList.Add("--stdio");
         return Process.Start(info) ?? throw new InvalidOperationException("无法启动 Codex App Server。");
     }
+
+    private static string EscapeToml(string value) => value.Replace("\\", "\\\\").Replace("\"", "\\\"");
 
     private static async Task<JsonElement> CallAsync(Process process, int id, string method, string parameters)
     {
@@ -157,7 +171,7 @@ public static class CodexAppServerClient
         while (true) { var read = process.StandardOutput.ReadLineAsync(); if (await Task.WhenAny(read, timeout) != read) throw new TimeoutException("Codex App Server 未在 60 秒内响应。"); var line = await read; if (string.IsNullOrEmpty(line)) continue; using var doc = JsonDocument.Parse(line); var root = doc.RootElement; if (!root.TryGetProperty("id", out var responseId) || responseId.GetInt32() != id) continue; if (root.TryGetProperty("error", out var error)) throw new InvalidOperationException(error.GetRawText()); return root.GetProperty("result").Clone(); }
     }
 
-    private static async Task ReadAssistantReplyAsync(Process process, string threadId, string turnId, Action<string> onAssistantDelta, Action<CodexApprovalRequest> onApprovalRequested, Action<List<CodexFileChange>> onFileChanges)
+    private static async Task ReadAssistantReplyAsync(Process process, string threadId, string turnId, Action<string> onAssistantDelta, Action<CodexApprovalRequest> onApprovalRequested, Action<CodexMcpElicitationRequest> onMcpElicitationRequested, Action<List<CodexFileChange>> onFileChanges)
     {
         var timeout = Task.Delay(300000);
         while (true)
@@ -174,6 +188,22 @@ public static class CodexAppServerClient
             if (!root.TryGetProperty("params", out var parameters)) continue;
             var methodName = method.GetString();
             if (methodName != "item/agentMessage/delta" && methodName != "turn/completed") UnityDebug.Log("[Codex Unity] App Server event: " + methodName);
+
+            if (methodName == "mcpServer/elicitation/request" && root.TryGetProperty("id", out var elicitationId))
+            {
+                var elicitationIdRaw = elicitationId.GetRawText();
+                var requestedSchema = parameters.TryGetProperty("requestedSchema", out var schema) ? schema.GetRawText() : string.Empty;
+                var request = new CodexMcpElicitationRequest
+                {
+                    ServerName = Text(parameters, "serverName", Text(parameters, "serverId", "Unity MCP")),
+                    Message = Text(parameters, "message", "Codex 请求继续使用 Unity MCP 工具。"),
+                    RequestedSchema = requestedSchema,
+                    Respond = decision => _ = RespondToMcpElicitationRequestAsync(process, elicitationIdRaw, decision)
+                };
+                UnityDebug.Log("[Codex Unity] Showing Unity MCP approval card. Parameters: " + parameters.GetRawText());
+                onMcpElicitationRequested?.Invoke(request);
+                continue;
+            }
 
             var notificationThreadId = Text(parameters, "threadId");
             var notificationTurnId = Text(parameters, "turnId");
@@ -224,6 +254,14 @@ public static class CodexAppServerClient
     private static async Task RespondToServerRequestAsync(Process process, string requestId, string decision)
     {
         await process.StandardInput.WriteLineAsync("{\"jsonrpc\":\"2.0\",\"id\":" + requestId + ",\"result\":{\"decision\":\"" + Escape(decision) + "\"}}");
+        await process.StandardInput.FlushAsync();
+    }
+
+    private static async Task RespondToMcpElicitationRequestAsync(Process process, string requestId, string decision)
+    {
+        var result = decision == "accept" ? "{\"action\":\"accept\",\"content\":{}}" : "{\"action\":\"" + Escape(decision) + "\"}";
+        UnityDebug.Log("[Codex Unity] Responding to Unity MCP elicitation: " + decision + ".");
+        await process.StandardInput.WriteLineAsync("{\"jsonrpc\":\"2.0\",\"id\":" + requestId + ",\"result\":" + result + "}");
         await process.StandardInput.FlushAsync();
     }
 

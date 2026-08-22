@@ -12,6 +12,7 @@ public sealed partial class CodexWindow
     private string selectedEffort;
     private bool isSelectingDefaultThread;
     private bool needsConversationRestore;
+    private bool isScrollToLatestScheduled;
     private void OnEnable() => CodexWorkspaceStore.Instance.Changed += RefreshWorkspaceUi;
     private void OnDisable() => CodexWorkspaceStore.Instance.Changed -= RefreshWorkspaceUi;
     private void OnFocus() => BeginWorkspaceRefresh();
@@ -37,6 +38,12 @@ public sealed partial class CodexWindow
         if (selectedThread != null && activeThreadLabel != null) activeThreadLabel.text = selectedThread.Name;
         RefreshModelMenus(state);
         accountLabel.text = !string.IsNullOrEmpty(state.Error) ? state.Error : state.Account.IsLoggedIn ? state.Account.Email + "\n套餐：" + state.Account.PlanType : "未登录 Codex";
+        if (quotaLabel != null && quotaFill != null)
+        {
+            // account/read currently supplies identity and plan but not a reliable remaining-quota value.
+            quotaLabel.text = "可用额度：暂无法从 Codex App Server 获取";
+            quotaFill.style.width = Length.Percent(0);
+        }
         var hasSelection = selectedThread != null; messageInput.SetEnabled(hasSelection); sendButton.SetEnabled(hasSelection);
         RestoreConversationWhenReady(state);
     }
@@ -68,6 +75,7 @@ public sealed partial class CodexWindow
             if (selectedThreadId != thread.Id) return;
             conversation.Clear();
             foreach (var message in messages) conversation.Add(message.IsFileChange ? CreateFileChangeCard(message.FileChanges) : CreateMessage(message.Sender, message.Text));
+            ScrollConversationToLatest();
             Debug.Log("[Codex Unity] Loaded " + messages.Count + " history message(s) for thread " + thread.Id + ".");
         }
         catch (Exception error)
@@ -100,7 +108,7 @@ public sealed partial class CodexWindow
         {
             conversation.Add(CreateMessage("你", text));
             conversation.Add(CreateStreamingMessage("Codex", out var assistantText));
-            conversation.ScrollTo(assistantText);
+            ScrollConversationToLatest();
             var hasReply = false;
             await CodexAppServerClient.SendMessageAsync(
                 GetProjectRoot(), selectedThreadId, text, selectedModelId, selectedEffort,
@@ -108,19 +116,25 @@ public sealed partial class CodexWindow
                 {
                     if (!hasReply) { assistantText.text = string.Empty; hasReply = true; }
                     assistantText.text += delta;
-                    conversation.ScrollTo(assistantText);
+                    ScrollConversationToLatest();
                 },
                 request =>
                 {
                     var approvalCard = CreateApprovalCard(request);
                     conversation.Add(approvalCard);
-                    conversation.ScrollTo(approvalCard);
+                    ScrollConversationToLatest();
+                },
+                request =>
+                {
+                    var elicitationCard = CreateMcpElicitationCard(request);
+                    conversation.Add(elicitationCard);
+                    ScrollConversationToLatest();
                 },
                 changes =>
                 {
                     var fileChangeCard = CreateFileChangeCard(changes);
                     conversation.Add(fileChangeCard);
-                    conversation.ScrollTo(fileChangeCard);
+                    ScrollConversationToLatest();
                 });
             messageInput.value = string.Empty;
             Debug.Log("[Codex Unity] Message and assistant reply completed for thread " + selectedThreadId + ".");
@@ -172,6 +186,18 @@ public sealed partial class CodexWindow
         selectedEffort = effort;
         RefreshModelMenus(CodexWorkspaceStore.Instance.Snapshot);
     }
+    private void ScrollConversationToLatest()
+    {
+        if (conversation == null || isScrollToLatestScheduled) return;
+        isScrollToLatestScheduled = true;
+        conversation.schedule.Execute(() =>
+        {
+            isScrollToLatestScheduled = false;
+            if (conversation == null || conversation.contentContainer.childCount == 0) return;
+            var latest = conversation.contentContainer[conversation.contentContainer.childCount - 1];
+            conversation.ScrollTo(latest);
+        }).ExecuteLater(1);
+    }
     private static string DisplayEffort(string effort)
     {
         switch (effort)
@@ -185,7 +211,34 @@ public sealed partial class CodexWindow
             default: return string.IsNullOrEmpty(effort) ? "思考：—" : "思考：" + effort;
         }
     }
-    private void ToggleAccountPanel() => accountPanel.style.display = accountPanel.style.display == DisplayStyle.None ? DisplayStyle.Flex : DisplayStyle.None;
+    private void ToggleAccountPanel()
+    {
+        var show = accountPanel.style.display == DisplayStyle.None;
+        accountPanel.style.display = show ? DisplayStyle.Flex : DisplayStyle.None;
+        if (show) { mcpPanel.style.display = DisplayStyle.None; mcpCategoryPanel.style.display = DisplayStyle.None; }
+    }
+    private void ToggleMcpPanel()
+    {
+        var show = mcpPanel.style.display == DisplayStyle.None;
+        mcpPanel.style.display = show ? DisplayStyle.Flex : DisplayStyle.None;
+        if (!show) { mcpCategoryPanel.style.display = DisplayStyle.None; return; }
+        accountPanel.style.display = DisplayStyle.None;
+        mcpLabel.text = "Unity MCP\n状态：" + (CodexUnityMcpBridge.IsRunning ? "已连接" : "未连接")
+            + "\n端口：" + (CodexUnityMcpBridge.IsRunning ? CodexUnityMcpBridge.Endpoint : "—")
+            + "\n可用 API：" + CodexUnityMcpTools.ToolNames.Length + " 个\n分类：" + CodexUnityMcpTools.ToolCategories.Length + " 个";
+        mcpCategoryPanel.style.display = DisplayStyle.None;
+        mcpCategories.Clear();
+        foreach (var category in CodexUnityMcpTools.ToolCategories)
+        {
+            var item = category;
+            mcpCategories.Add(new Button(() => ShowMcpCategory(item)) { text = item.Name + "（" + item.Tools.Length + "）", tooltip = item.Description, style = { marginTop = 3 } });
+        }
+    }
+    private void ShowMcpCategory(CodexUnityMcpTools.ToolCategory category)
+    {
+        mcpCategoryLabel.text = category.Name + "\n" + category.Description + "\n\nAPI（" + category.Tools.Length + "）\n• " + string.Join("\n• ", category.Tools);
+        mcpCategoryPanel.style.display = DisplayStyle.Flex;
+    }
     private static string GetProjectName() => Path.GetFileName(GetProjectRoot());
     private static string GetProjectRoot() => Directory.GetParent(Application.dataPath).FullName;
 #endregion

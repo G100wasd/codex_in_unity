@@ -18,6 +18,7 @@ public sealed partial class CodexWindow : EditorWindow
         rootVisualElement.Add(CreateMainPanel());
         needsConversationRestore = true;
         RefreshWorkspaceUi();
+        CodexUnityMcpBridge.EnsureStarted();
         BeginWorkspaceRefresh();
     }
 }
