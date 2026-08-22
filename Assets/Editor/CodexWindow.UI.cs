@@ -168,11 +168,12 @@ public sealed partial class CodexWindow
     }
     private static VisualElement CreateMcpApiApprovalCard(CodexMcpApiApprovalRequest request)
     {
-        var card = new VisualElement { style = { marginTop = 8, marginBottom = 8, paddingLeft = 10, paddingRight = 10, paddingTop = 8, paddingBottom = 8, backgroundColor = new Color(.25f, .14f, .08f) } };
-        card.Add(new Label("Unity API 操作审批") { style = { unityFontStyleAndWeight = FontStyle.Bold } });
+        var card = new VisualElement { style = { marginTop = 8, marginBottom = 8, paddingLeft = 10, paddingRight = 10, paddingTop = 8, paddingBottom = 8, backgroundColor = request.IsLongRunning ? new Color(.22f, .12f, .04f) : new Color(.25f, .14f, .08f) } };
+        card.Add(new Label(request.IsLongRunning ? "Unity 长任务审批" : "Unity API 操作审批") { style = { unityFontStyleAndWeight = FontStyle.Bold } });
         card.Add(new Label("工具：" + request.ToolName) { style = { marginTop = 3 } });
         card.Add(new Label(request.Summary) { style = { whiteSpace = WhiteSpace.Normal, marginTop = 4 } });
         card.Add(new Label("参数：" + request.Arguments) { style = { whiteSpace = WhiteSpace.Normal, opacity = .7f, marginTop = 3 } });
+        if (request.IsLongRunning) card.Add(new Label("任务获准后会立即返回 jobId；请用状态工具查询进度。构建等 Unity 原生操作开始后通常无法安全中断。") { style = { whiteSpace = WhiteSpace.Normal, opacity = .8f, marginTop = 4 } });
         var actions = new VisualElement { style = { flexDirection = FlexDirection.Row, marginTop = 6 } };
         actions.Add(new Button(() => ResolveMcpApiApproval(card, request, true)) { text = "允许本次" });
         actions.Add(new Button(() => ResolveMcpApiApproval(card, request, false)) { text = "拒绝" });

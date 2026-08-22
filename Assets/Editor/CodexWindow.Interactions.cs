@@ -204,7 +204,7 @@ public sealed partial class CodexWindow
             conversation.verticalScroller.value = conversation.verticalScroller.highValue;
         }).ExecuteLater(50);
     }
-    internal static async Task<bool> RequestMcpApiApprovalAsync(string toolName, string summary, string arguments)
+    internal static async Task<bool> RequestMcpApiApprovalAsync(string toolName, string summary, string arguments, bool isLongRunning = false)
     {
         var completion = new TaskCompletionSource<bool>();
         await CodexUnityEditorDispatcher.RunAsync(() =>
@@ -214,7 +214,7 @@ public sealed partial class CodexWindow
                 completion.TrySetResult(false);
                 return 0;
             }
-            var request = new CodexMcpApiApprovalRequest { ToolName = toolName, Summary = summary, Arguments = arguments, Respond = allowed => completion.TrySetResult(allowed) };
+            var request = new CodexMcpApiApprovalRequest { ToolName = toolName, Summary = summary, Arguments = arguments, IsLongRunning = isLongRunning, Respond = allowed => completion.TrySetResult(allowed) };
             var card = CreateMcpApiApprovalCard(request);
             activeWindow.conversation.Add(card);
             activeWindow.ScrollConversationToLatest();

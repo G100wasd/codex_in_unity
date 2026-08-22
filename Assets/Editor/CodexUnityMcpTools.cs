@@ -19,14 +19,14 @@ internal static class CodexUnityMcpTools
     private static readonly List<string> RecentLogs = new List<string>();
     private static TestRunnerApi testRunnerApi;
     private static string testRunId, testRunStatus = "No test run has been started.", testRunSummary;
-    internal static readonly string[] ToolNames = { "unity_get_editor_state", "unity_get_open_scenes", "unity_get_scene_view_state", "unity_get_hierarchy", "unity_find_game_objects", "unity_get_game_object_details", "unity_get_selection", "unity_set_selection", "unity_frame_selection", "unity_get_component_properties", "unity_create_game_object", "unity_create_primitive", "unity_delete_game_object", "unity_duplicate_game_object", "unity_add_component", "unity_remove_component", "unity_set_transform", "unity_set_game_object_metadata", "unity_set_serialized_property", "unity_get_recent_logs", "unity_get_console_summary", "unity_get_project_info", "unity_find_asset", "unity_get_asset_details", "unity_get_asset_dependencies", "unity_get_prefab_details", "unity_open_asset", "unity_create_scene", "unity_open_scene", "unity_close_scene", "unity_set_active_scene", "unity_save_active_scene", "unity_save_all_scenes", "unity_create_prefab", "unity_instantiate_prefab", "unity_create_folder", "unity_move_asset", "unity_rename_asset", "unity_delete_asset", "unity_duplicate_asset", "unity_create_material", "unity_create_script", "unity_set_asset_labels", "unity_reimport_asset", "unity_refresh_asset_database", "unity_save_assets", "unity_get_build_settings", "unity_add_scene_to_build_settings", "unity_get_define_symbols", "unity_set_define_symbols", "unity_get_installed_packages", "unity_find_missing_scripts", "unity_run_tests", "unity_get_test_run_status", "unity_undo", "unity_redo", "unity_set_play_mode", "unity_execute_menu_item" };
+    internal static readonly string[] ToolNames = { "unity_get_editor_state", "unity_get_open_scenes", "unity_get_scene_view_state", "unity_capture_scene_view", "unity_get_hierarchy", "unity_find_game_objects", "unity_get_game_object_details", "unity_get_selection", "unity_set_selection", "unity_frame_selection", "unity_get_component_properties", "unity_get_component_values", "unity_create_game_object", "unity_create_primitive", "unity_delete_game_object", "unity_duplicate_game_object", "unity_add_component", "unity_remove_component", "unity_set_transform", "unity_set_game_object_metadata", "unity_set_serialized_property", "unity_get_recent_logs", "unity_get_console_summary", "unity_get_project_info", "unity_find_asset", "unity_get_asset_details", "unity_get_asset_importer_settings", "unity_set_texture_importer_settings", "unity_get_asset_dependencies", "unity_get_prefab_details", "unity_get_prefab_overrides", "unity_apply_prefab_instance", "unity_revert_prefab_instance", "unity_unpack_prefab_instance", "unity_open_asset", "unity_create_scene", "unity_open_scene", "unity_close_scene", "unity_set_active_scene", "unity_save_active_scene", "unity_save_all_scenes", "unity_create_prefab", "unity_instantiate_prefab", "unity_create_folder", "unity_move_asset", "unity_rename_asset", "unity_delete_asset", "unity_duplicate_asset", "unity_create_material", "unity_create_script", "unity_set_asset_labels", "unity_reimport_asset", "unity_refresh_asset_database", "unity_save_assets", "unity_get_build_settings", "unity_add_scene_to_build_settings", "unity_get_define_symbols", "unity_set_define_symbols", "unity_get_installed_packages", "unity_find_missing_scripts", "unity_validate_scene", "unity_get_compilation_status", "unity_run_tests", "unity_get_test_run_status", "unity_undo", "unity_redo", "unity_set_play_mode", "unity_execute_menu_item" };
     internal static readonly ToolCategory[] ToolCategories =
     {
-        new ToolCategory("编辑器与场景", "编辑器状态、场景与视图上下文", "unity_get_editor_state", "unity_get_open_scenes", "unity_get_scene_view_state", "unity_get_hierarchy"),
-        new ToolCategory("对象与 Inspector", "场景对象检索、选择、组件与受审批的对象修改", "unity_find_game_objects", "unity_get_game_object_details", "unity_get_selection", "unity_set_selection", "unity_frame_selection", "unity_get_component_properties", "unity_create_game_object", "unity_create_primitive", "unity_delete_game_object", "unity_duplicate_game_object", "unity_add_component", "unity_remove_component", "unity_set_transform", "unity_set_game_object_metadata", "unity_set_serialized_property"),
+        new ToolCategory("编辑器与场景", "编辑器状态、场景、视图与截图", "unity_get_editor_state", "unity_get_open_scenes", "unity_get_scene_view_state", "unity_capture_scene_view", "unity_get_hierarchy", "unity_get_compilation_status", "unity_validate_scene"),
+        new ToolCategory("对象与 Inspector", "场景对象检索、选择、组件与受审批的对象修改", "unity_find_game_objects", "unity_get_game_object_details", "unity_get_selection", "unity_set_selection", "unity_frame_selection", "unity_get_component_properties", "unity_get_component_values", "unity_create_game_object", "unity_create_primitive", "unity_delete_game_object", "unity_duplicate_game_object", "unity_add_component", "unity_remove_component", "unity_set_transform", "unity_set_game_object_metadata", "unity_set_serialized_property"),
         new ToolCategory("Console、测试与诊断", "Bridge 日志、Unity Test Runner 与 Missing Script 检查", "unity_get_recent_logs", "unity_get_console_summary", "unity_find_missing_scripts", "unity_run_tests", "unity_get_test_run_status"),
-        new ToolCategory("Scene 与 Prefab", "场景与 Prefab 的创建、打开、关闭、保存和实例化（写操作均需审批）", "unity_create_scene", "unity_open_scene", "unity_close_scene", "unity_set_active_scene", "unity_save_active_scene", "unity_save_all_scenes", "unity_create_prefab", "unity_instantiate_prefab", "unity_get_prefab_details"),
-        new ToolCategory("项目与资源", "项目、资源、依赖与受审批的资源管理", "unity_get_project_info", "unity_find_asset", "unity_get_asset_details", "unity_get_asset_dependencies", "unity_open_asset", "unity_create_folder", "unity_move_asset", "unity_rename_asset", "unity_delete_asset", "unity_duplicate_asset", "unity_create_material", "unity_create_script", "unity_set_asset_labels", "unity_reimport_asset", "unity_refresh_asset_database", "unity_save_assets"),
+        new ToolCategory("Scene 与 Prefab", "场景与 Prefab 的创建、打开、关闭、保存、覆写与实例化", "unity_create_scene", "unity_open_scene", "unity_close_scene", "unity_set_active_scene", "unity_save_active_scene", "unity_save_all_scenes", "unity_create_prefab", "unity_instantiate_prefab", "unity_get_prefab_details", "unity_get_prefab_overrides", "unity_apply_prefab_instance", "unity_revert_prefab_instance", "unity_unpack_prefab_instance"),
+        new ToolCategory("项目与资源", "项目、资源、Importer 与受审批的资源管理", "unity_get_project_info", "unity_find_asset", "unity_get_asset_details", "unity_get_asset_importer_settings", "unity_set_texture_importer_settings", "unity_get_asset_dependencies", "unity_open_asset", "unity_create_folder", "unity_move_asset", "unity_rename_asset", "unity_delete_asset", "unity_duplicate_asset", "unity_create_material", "unity_create_script", "unity_set_asset_labels", "unity_reimport_asset", "unity_refresh_asset_database", "unity_save_assets"),
         new ToolCategory("构建、包与编辑器控制", "Build Settings、Define Symbols、Package 列表与编辑器操作", "unity_get_build_settings", "unity_add_scene_to_build_settings", "unity_get_define_symbols", "unity_set_define_symbols", "unity_get_installed_packages", "unity_undo", "unity_redo", "unity_set_play_mode", "unity_execute_menu_item")
     };
     internal const string ToolDefinitionsJson = "["
@@ -88,6 +88,16 @@ internal static class CodexUnityMcpTools
         + ",{\"name\":\"unity_redo\",\"description\":\"Perform one Unity Redo operation. Requires Unity API approval.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{}}}"
         + ",{\"name\":\"unity_run_tests\",\"description\":\"Start Unity EditMode or PlayMode tests and return a job id. Requires Unity API approval.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"mode\":{\"type\":\"string\",\"enum\":[\"EditMode\",\"PlayMode\"]},\"testNames\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}}},\"required\":[\"mode\"]}}"
         + ",{\"name\":\"unity_get_test_run_status\",\"description\":\"Get status and latest summary for the Unity test run started by this bridge.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{}}}"
+        + ",{\"name\":\"unity_capture_scene_view\",\"description\":\"Capture the active Scene View to a PNG asset path. Requires Unity API approval.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"},\"width\":{\"type\":\"integer\"},\"height\":{\"type\":\"integer\"}},\"required\":[\"path\"]}}"
+        + ",{\"name\":\"unity_get_component_values\",\"description\":\"Read visible serialized Component property paths, types, and values.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"},\"componentType\":{\"type\":\"string\"}},\"required\":[\"path\",\"componentType\"]}}"
+        + ",{\"name\":\"unity_get_prefab_overrides\",\"description\":\"List property overrides on a loaded Prefab instance.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}},\"required\":[\"path\"]}}"
+        + ",{\"name\":\"unity_apply_prefab_instance\",\"description\":\"Apply overrides from a Prefab instance to its source asset. Requires Unity API approval.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}},\"required\":[\"path\"]}}"
+        + ",{\"name\":\"unity_revert_prefab_instance\",\"description\":\"Revert a Prefab instance to its source asset. Requires Unity API approval.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}},\"required\":[\"path\"]}}"
+        + ",{\"name\":\"unity_unpack_prefab_instance\",\"description\":\"Unpack a Prefab instance. Requires Unity API approval.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}},\"required\":[\"path\"]}}"
+        + ",{\"name\":\"unity_get_compilation_status\",\"description\":\"Get Unity script compilation and asset update status.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{}}}"
+        + ",{\"name\":\"unity_validate_scene\",\"description\":\"Validate loaded scenes for unsaved changes and missing scripts.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{}}}"
+        + ",{\"name\":\"unity_get_asset_importer_settings\",\"description\":\"Read common importer settings for an asset.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}},\"required\":[\"path\"]}}"
+        + ",{\"name\":\"unity_set_texture_importer_settings\",\"description\":\"Set optional TextureImporter readable, mipmapEnabled, maxTextureSize, or textureType settings. Requires Unity API approval.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"},\"readable\":{\"type\":\"boolean\"},\"mipmapEnabled\":{\"type\":\"boolean\"},\"maxTextureSize\":{\"type\":\"integer\"},\"textureType\":{\"type\":\"string\"}},\"required\":[\"path\"]}}"
         + "]";
 
     static CodexUnityMcpTools()
@@ -107,6 +117,7 @@ internal static class CodexUnityMcpTools
             case "unity_get_editor_state": return new ToolOutput(GetEditorState());
             case "unity_get_open_scenes": return new ToolOutput(GetOpenScenes());
             case "unity_get_scene_view_state": return new ToolOutput(GetSceneViewState());
+            case "unity_capture_scene_view": return CaptureSceneView(GetString(arguments, "path"), GetInt(arguments, "width", 1024), GetInt(arguments, "height", 768));
             case "unity_get_hierarchy": return new ToolOutput(GetHierarchy(GetInt(arguments, "maxDepth", 4)));
             case "unity_find_game_objects": return new ToolOutput(FindGameObjects(GetString(arguments, "query"), GetInt(arguments, "maxResults", 30)));
             case "unity_get_game_object_details": return new ToolOutput(GetGameObjectDetails(GetString(arguments, "path")));
@@ -114,6 +125,7 @@ internal static class CodexUnityMcpTools
             case "unity_set_selection": return SetSelection(GetString(arguments, "path"));
             case "unity_frame_selection": return FrameSelection();
             case "unity_get_component_properties": return new ToolOutput(GetComponentProperties(GetString(arguments, "path"), GetString(arguments, "componentType")));
+            case "unity_get_component_values": return new ToolOutput(GetComponentValues(GetString(arguments, "path"), GetString(arguments, "componentType")));
             case "unity_create_game_object": return CreateGameObject(arguments);
             case "unity_create_primitive": return CreatePrimitive(GetString(arguments, "primitive"), GetString(arguments, "name"), GetString(arguments, "parentPath"));
             case "unity_delete_game_object": return DeleteGameObject(GetString(arguments, "path"));
@@ -159,8 +171,16 @@ internal static class CodexUnityMcpTools
             case "unity_get_project_info": return new ToolOutput(GetProjectInfo());
             case "unity_find_asset": return new ToolOutput(FindAssets(GetString(arguments, "query")));
             case "unity_get_asset_details": return new ToolOutput(GetAssetDetails(GetString(arguments, "path")));
+            case "unity_get_asset_importer_settings": return new ToolOutput(GetAssetImporterSettings(GetString(arguments, "path")));
+            case "unity_set_texture_importer_settings": return SetTextureImporterSettings(arguments);
             case "unity_get_asset_dependencies": return new ToolOutput(GetAssetDependencies(GetString(arguments, "path")));
             case "unity_get_prefab_details": return new ToolOutput(GetPrefabDetails(GetString(arguments, "path")));
+            case "unity_get_prefab_overrides": return new ToolOutput(GetPrefabOverrides(GetString(arguments, "path")));
+            case "unity_apply_prefab_instance": return ApplyPrefabInstance(GetString(arguments, "path"));
+            case "unity_revert_prefab_instance": return RevertPrefabInstance(GetString(arguments, "path"));
+            case "unity_unpack_prefab_instance": return UnpackPrefabInstance(GetString(arguments, "path"));
+            case "unity_get_compilation_status": return new ToolOutput(GetCompilationStatus());
+            case "unity_validate_scene": return new ToolOutput(ValidateScene());
             case "unity_open_asset": return OpenAsset(GetString(arguments, "path"));
             default: return new ToolOutput("Unknown Unity MCP tool: " + name, true);
         }
@@ -199,6 +219,22 @@ internal static class CodexUnityMcpTools
     {
         var view = SceneView.lastActiveSceneView;
         return view == null ? "No Scene View is currently available." : "Pivot: " + view.pivot + "\nRotation: " + view.rotation.eulerAngles + "\nSize: " + view.size + "\n2D Mode: " + view.in2DMode;
+    }
+    private static ToolOutput CaptureSceneView(string path, int width, int height)
+    {
+        if (!IsSafeAssetsPath(path) || !path.EndsWith(".png", StringComparison.OrdinalIgnoreCase)) return new ToolOutput("Screenshot path must be a safe Assets/*.png path.", true);
+        if (!EnsureAssetParentFolder(path, out var error)) return new ToolOutput(error, true);
+        var view = SceneView.lastActiveSceneView; if (view == null || view.camera == null) return new ToolOutput("No Scene View camera is available.", true);
+        width = Mathf.Clamp(width, 64, 2048); height = Mathf.Clamp(height, 64, 2048);
+        var target = new RenderTexture(width, height, 24); var previous = view.camera.targetTexture; var previousActive = RenderTexture.active;
+        try
+        {
+            view.camera.targetTexture = target; view.camera.Render(); RenderTexture.active = target;
+            var image = new Texture2D(width, height, TextureFormat.RGB24, false); image.ReadPixels(new Rect(0, 0, width, height), 0, 0); image.Apply();
+            var projectRoot = Directory.GetParent(Application.dataPath).FullName; File.WriteAllBytes(Path.Combine(projectRoot, path), image.EncodeToPNG()); UnityEngine.Object.DestroyImmediate(image);
+            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate); return new ToolOutput("Captured Scene View: " + path);
+        }
+        finally { view.camera.targetTexture = previous; RenderTexture.active = previousActive; target.Release(); UnityEngine.Object.DestroyImmediate(target); }
     }
 
     private static string FindGameObjects(string query, int maxResults)
@@ -253,6 +289,14 @@ internal static class CodexUnityMcpTools
         var component = transform.GetComponent(type); if (component == null) return "Component is not present: " + typeName;
         var serialized = new SerializedObject(component); var iterator = serialized.GetIterator(); var lines = new List<string>(); var enterChildren = true;
         while (iterator.NextVisible(enterChildren) && lines.Count < 100) { lines.Add(iterator.propertyPath + " : " + iterator.propertyType); enterChildren = false; }
+        return "Component: " + type.FullName + "\n" + string.Join("\n", lines);
+    }
+    private static string GetComponentValues(string path, string typeName)
+    {
+        var transform = FindTransformByPath(path); var type = FindComponentType(typeName); if (transform == null) return "GameObject not found: " + path; if (type == null) return "Component type not found: " + typeName;
+        var component = transform.GetComponent(type); if (component == null) return "Component is not present: " + typeName;
+        var serialized = new SerializedObject(component); var iterator = serialized.GetIterator(); var lines = new List<string>(); var enterChildren = true;
+        while (iterator.NextVisible(enterChildren) && lines.Count < 100) { lines.Add(iterator.propertyPath + " : " + iterator.propertyType + " = " + SerializedValue(iterator)); enterChildren = false; }
         return "Component: " + type.FullName + "\n" + string.Join("\n", lines);
     }
     private static ToolOutput CreateGameObject(JsonElement arguments)
@@ -518,6 +562,21 @@ internal static class CodexUnityMcpTools
         var labels = AssetDatabase.GetLabels(asset);
         return "Path: " + path + "\nName: " + asset.name + "\nType: " + asset.GetType().Name + "\nImporter: " + (importer == null ? "none" : importer.GetType().Name) + "\nLabels: " + (labels.Length == 0 ? "none" : string.Join(", ", labels));
     }
+    private static string GetAssetImporterSettings(string path)
+    {
+        var importer = AssetImporter.GetAtPath(path); if (importer == null) return "Importer not found: " + path;
+        if (importer is TextureImporter texture) return "Importer: TextureImporter\nReadable: " + texture.isReadable + "\nMipmaps: " + texture.mipmapEnabled + "\nTexture type: " + texture.textureType + "\nMax texture size: " + texture.maxTextureSize;
+        return "Importer: " + importer.GetType().Name + "\nAsset bundle: " + importer.assetBundleName + "\nUser data: " + importer.userData;
+    }
+    private static ToolOutput SetTextureImporterSettings(JsonElement arguments)
+    {
+        var path = GetString(arguments, "path"); var importer = AssetImporter.GetAtPath(path) as TextureImporter; if (importer == null) return new ToolOutput("TextureImporter not found: " + path, true);
+        if (arguments.TryGetProperty("readable", out var readable) && (readable.ValueKind == JsonValueKind.True || readable.ValueKind == JsonValueKind.False)) importer.isReadable = readable.GetBoolean();
+        if (arguments.TryGetProperty("mipmapEnabled", out var mipmaps) && (mipmaps.ValueKind == JsonValueKind.True || mipmaps.ValueKind == JsonValueKind.False)) importer.mipmapEnabled = mipmaps.GetBoolean();
+        if (arguments.TryGetProperty("maxTextureSize", out var size) && size.TryGetInt32(out var maxSize)) importer.maxTextureSize = Mathf.Clamp(maxSize, 32, 8192);
+        if (arguments.TryGetProperty("textureType", out var type) && type.ValueKind == JsonValueKind.String && Enum.TryParse(type.GetString(), true, out TextureImporterType textureType)) importer.textureType = textureType;
+        importer.SaveAndReimport(); return new ToolOutput("Updated TextureImporter: " + path);
+    }
 
     private static string GetAssetDependencies(string path)
     {
@@ -533,6 +592,22 @@ internal static class CodexUnityMcpTools
         var components = prefab.GetComponents<Component>().Where(component => component != null).Select(component => component.GetType().Name);
         var children = Enumerable.Range(0, prefab.transform.childCount).Select(index => prefab.transform.GetChild(index).name);
         return "Path: " + path + "\nPrefab type: " + PrefabUtility.GetPrefabAssetType(prefab) + "\nRoot: " + prefab.name + "\nComponents: " + string.Join(", ", components) + "\nDirect children: " + (prefab.transform.childCount == 0 ? "none" : string.Join(", ", children));
+    }
+    private static string GetPrefabOverrides(string path)
+    {
+        var transform = FindTransformByPath(path); if (transform == null) return "GameObject not found: " + path;
+        var root = PrefabUtility.GetOutermostPrefabInstanceRoot(transform.gameObject); if (root == null) return "GameObject is not part of a Prefab instance.";
+        var modifications = PrefabUtility.GetPropertyModifications(root) ?? Array.Empty<PropertyModification>();
+        return modifications.Length == 0 ? "No Prefab overrides." : string.Join("\n", modifications.Take(100).Select(item => item.target.GetType().Name + "." + item.propertyPath + " = " + item.value));
+    }
+    private static ToolOutput ApplyPrefabInstance(string path) { var transform = FindTransformByPath(path); var root = transform == null ? null : PrefabUtility.GetOutermostPrefabInstanceRoot(transform.gameObject); if (root == null) return new ToolOutput("Prefab instance not found: " + path, true); PrefabUtility.ApplyPrefabInstance(root, InteractionMode.UserAction); return new ToolOutput("Applied Prefab instance: " + GetTransformPath(root.transform)); }
+    private static ToolOutput RevertPrefabInstance(string path) { var transform = FindTransformByPath(path); var root = transform == null ? null : PrefabUtility.GetOutermostPrefabInstanceRoot(transform.gameObject); if (root == null) return new ToolOutput("Prefab instance not found: " + path, true); PrefabUtility.RevertPrefabInstance(root, InteractionMode.UserAction); return new ToolOutput("Reverted Prefab instance: " + path); }
+    private static ToolOutput UnpackPrefabInstance(string path) { var transform = FindTransformByPath(path); var root = transform == null ? null : PrefabUtility.GetOutermostPrefabInstanceRoot(transform.gameObject); if (root == null) return new ToolOutput("Prefab instance not found: " + path, true); PrefabUtility.UnpackPrefabInstance(root, PrefabUnpackMode.Completely, InteractionMode.UserAction); return new ToolOutput("Unpacked Prefab instance: " + path); }
+    private static string GetCompilationStatus() => "Is compiling: " + EditorApplication.isCompiling + "\nIs updating assets: " + EditorApplication.isUpdating + "\nIs playing: " + EditorApplication.isPlaying;
+    private static string ValidateScene()
+    {
+        var dirty = new List<string>(); for (var i = 0; i < SceneManager.sceneCount; i++) { var scene = SceneManager.GetSceneAt(i); if (scene.isLoaded && scene.isDirty) dirty.Add(string.IsNullOrEmpty(scene.path) ? scene.name + " (unsaved)" : scene.path); }
+        var missing = FindMissingScripts(); return "Dirty scenes: " + (dirty.Count == 0 ? "none" : string.Join(", ", dirty)) + "\n" + missing;
     }
 
     private static ToolOutput OpenAsset(string path)
@@ -588,12 +663,14 @@ internal static class CodexUnityMcpTools
         }
         return true;
     }
-    internal static bool RequiresApiApproval(string name) => name == "unity_create_game_object" || name == "unity_create_primitive" || name == "unity_delete_game_object" || name == "unity_duplicate_game_object" || name == "unity_add_component" || name == "unity_remove_component" || name == "unity_set_transform" || name == "unity_set_game_object_metadata" || name == "unity_set_serialized_property" || name == "unity_create_scene" || name == "unity_open_scene" || name == "unity_close_scene" || name == "unity_set_active_scene" || name == "unity_save_active_scene" || name == "unity_save_all_scenes" || name == "unity_create_prefab" || name == "unity_instantiate_prefab" || name == "unity_create_folder" || name == "unity_move_asset" || name == "unity_rename_asset" || name == "unity_delete_asset" || name == "unity_duplicate_asset" || name == "unity_create_material" || name == "unity_create_script" || name == "unity_set_asset_labels" || name == "unity_reimport_asset" || name == "unity_refresh_asset_database" || name == "unity_save_assets" || name == "unity_add_scene_to_build_settings" || name == "unity_set_define_symbols" || name == "unity_run_tests" || name == "unity_undo" || name == "unity_redo" || name == "unity_set_play_mode" || name == "unity_execute_menu_item";
+    internal static bool RequiresApiApproval(string name) => name == "unity_capture_scene_view" || name == "unity_create_game_object" || name == "unity_create_primitive" || name == "unity_delete_game_object" || name == "unity_duplicate_game_object" || name == "unity_add_component" || name == "unity_remove_component" || name == "unity_set_transform" || name == "unity_set_game_object_metadata" || name == "unity_set_serialized_property" || name == "unity_create_scene" || name == "unity_open_scene" || name == "unity_close_scene" || name == "unity_set_active_scene" || name == "unity_save_active_scene" || name == "unity_save_all_scenes" || name == "unity_create_prefab" || name == "unity_instantiate_prefab" || name == "unity_apply_prefab_instance" || name == "unity_revert_prefab_instance" || name == "unity_unpack_prefab_instance" || name == "unity_create_folder" || name == "unity_move_asset" || name == "unity_rename_asset" || name == "unity_delete_asset" || name == "unity_duplicate_asset" || name == "unity_create_material" || name == "unity_create_script" || name == "unity_set_asset_labels" || name == "unity_reimport_asset" || name == "unity_set_texture_importer_settings" || name == "unity_refresh_asset_database" || name == "unity_save_assets" || name == "unity_add_scene_to_build_settings" || name == "unity_set_define_symbols" || name == "unity_run_tests" || name == "unity_undo" || name == "unity_redo" || name == "unity_set_play_mode" || name == "unity_execute_menu_item";
+    internal static bool IsLongRunning(string name) => name == "unity_run_tests";
     internal static string GetMutationSummary(string name)
     {
         switch (name)
         {
             case "unity_create_game_object": return "将在当前场景创建一个 GameObject。";
+            case "unity_capture_scene_view": return "将截取当前 Scene View 并把 PNG 写入项目资源。";
             case "unity_create_primitive": return "将在当前场景创建一个 Unity 内置 Primitive。";
             case "unity_delete_game_object": return "将从当前场景删除一个 GameObject。";
             case "unity_duplicate_game_object": return "将在当前场景复制一个 GameObject。";
@@ -623,7 +700,10 @@ internal static class CodexUnityMcpTools
             case "unity_refresh_asset_database": return "将刷新 Unity 的资源数据库。";
             case "unity_save_assets": return "将保存全部脏资源。";
             case "unity_set_define_symbols": return "将修改当前构建目标的 Scripting Define Symbols，可能触发重新编译。";
-            case "unity_run_tests": return "将启动 Unity Test Runner 测试任务。";
+            case "unity_run_tests": return "将启动 Unity Test Runner 测试任务；它会在后台运行，并返回可查询进度的 job id。";
+            case "unity_apply_prefab_instance": return "将把 Prefab 实例的覆写应用到源资源。";
+            case "unity_revert_prefab_instance": return "将丢弃 Prefab 实例上的全部覆写。";
+            case "unity_unpack_prefab_instance": return "将解除 Prefab 实例与源资源的关联。";
             case "unity_set_play_mode": return "将进入或退出 Unity Play Mode。";
             default: return "将执行 Unity 编辑器菜单命令。";
         }
@@ -645,5 +725,22 @@ internal static class CodexUnityMcpTools
         if (!value.TryGetProperty("x", out var x) || !value.TryGetProperty("y", out var y) || !value.TryGetProperty("z", out var z)) return false;
         result = new Vector3(x.GetSingle(), y.GetSingle(), z.GetSingle());
         return true;
+    }
+    private static string SerializedValue(SerializedProperty property)
+    {
+        switch (property.propertyType)
+        {
+            case SerializedPropertyType.Integer: return property.intValue.ToString();
+            case SerializedPropertyType.Boolean: return property.boolValue.ToString();
+            case SerializedPropertyType.Float: return property.floatValue.ToString("0.###");
+            case SerializedPropertyType.String: return property.stringValue;
+            case SerializedPropertyType.Enum: return property.enumDisplayNames != null && property.enumValueIndex >= 0 && property.enumValueIndex < property.enumDisplayNames.Length ? property.enumDisplayNames[property.enumValueIndex] : property.enumValueIndex.ToString();
+            case SerializedPropertyType.Vector2: return property.vector2Value.ToString();
+            case SerializedPropertyType.Vector3: return property.vector3Value.ToString();
+            case SerializedPropertyType.Vector4: return property.vector4Value.ToString();
+            case SerializedPropertyType.Color: return property.colorValue.ToString();
+            case SerializedPropertyType.ObjectReference: return property.objectReferenceValue == null ? "null" : property.objectReferenceValue.name;
+            default: return "…";
+        }
     }
 }
