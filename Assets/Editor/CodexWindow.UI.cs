@@ -90,12 +90,15 @@ public sealed partial class CodexWindow
         }; main.Add(activeThreadLabel); 
         conversation = new ScrollView { style = { flexGrow = 1 } };
         main.Add(conversation);
-        messageInput = new TextField { multiline = true, isDelayed = false };
-        messageInput.style.height = 40;
-        messageInput.style.minHeight = 40; 
-        messageInput.style.maxHeight = 104; 
+        messageInput = new TextField { multiline = true, isDelayed = false, verticalScrollerVisibility = ScrollerVisibility.Auto };
+        messageInput.style.height = 42;
+        messageInput.style.minHeight = 42;
+        messageInput.style.maxHeight = 42;
         messageInput.style.whiteSpace = WhiteSpace.Normal; 
         messageInput.style.flexGrow = 1;
+        messageInput.style.flexShrink = 1;
+        messageInput.style.flexBasis = 0;
+        messageInput.style.minWidth = 0;
         messageInput.RegisterCallback<KeyDownEvent>(evt =>
         {
             if ((evt.keyCode == KeyCode.Return || evt.keyCode == KeyCode.KeypadEnter) && !evt.shiftKey)
@@ -106,8 +109,8 @@ public sealed partial class CodexWindow
             }
         });
         var composer = new VisualElement { style = { flexDirection = FlexDirection.Column, flexShrink = 0, marginTop = 8 } };
-        var row = new VisualElement { style = { flexDirection = FlexDirection.Row, height = 40, flexShrink = 0 } };
-        row.Add(messageInput); sendButton = new Button(SendMessage) { text = "↑", tooltip = "发送", style = { height = 40, width = 36, marginLeft = 6 } }; 
+        var row = new VisualElement { style = { flexDirection = FlexDirection.Row, height = 42, flexShrink = 0 } };
+        row.Add(messageInput); sendButton = new Button(SendMessage) { text = "↑", tooltip = "发送", style = { height = 42, width = 36, flexShrink = 0, marginLeft = 6 } }; 
         row.Add(sendButton); composer.Add(row);
         var options = new VisualElement { style = { flexDirection = FlexDirection.Row, height = 22, flexShrink = 0, marginTop = 6 } }; 
         modelMenu = new ToolbarMenu { text = "正在加载模型…" };
@@ -161,6 +164,25 @@ public sealed partial class CodexWindow
     {
         card.SetEnabled(false);
         request.Respond?.Invoke(decision);
+        card.RemoveFromHierarchy();
+    }
+    private static VisualElement CreateMcpApiApprovalCard(CodexMcpApiApprovalRequest request)
+    {
+        var card = new VisualElement { style = { marginTop = 8, marginBottom = 8, paddingLeft = 10, paddingRight = 10, paddingTop = 8, paddingBottom = 8, backgroundColor = new Color(.25f, .14f, .08f) } };
+        card.Add(new Label("Unity API 操作审批") { style = { unityFontStyleAndWeight = FontStyle.Bold } });
+        card.Add(new Label("工具：" + request.ToolName) { style = { marginTop = 3 } });
+        card.Add(new Label(request.Summary) { style = { whiteSpace = WhiteSpace.Normal, marginTop = 4 } });
+        card.Add(new Label("参数：" + request.Arguments) { style = { whiteSpace = WhiteSpace.Normal, opacity = .7f, marginTop = 3 } });
+        var actions = new VisualElement { style = { flexDirection = FlexDirection.Row, marginTop = 6 } };
+        actions.Add(new Button(() => ResolveMcpApiApproval(card, request, true)) { text = "允许本次" });
+        actions.Add(new Button(() => ResolveMcpApiApproval(card, request, false)) { text = "拒绝" });
+        card.Add(actions);
+        return card;
+    }
+    private static void ResolveMcpApiApproval(VisualElement card, CodexMcpApiApprovalRequest request, bool allowed)
+    {
+        card.SetEnabled(false);
+        request.Respond?.Invoke(allowed);
         card.RemoveFromHierarchy();
     }
     private static VisualElement CreateFileChangeCard(System.Collections.Generic.List<CodexFileChange> changes)

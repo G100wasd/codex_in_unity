@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Threading.Tasks;
 using UnityEngine;
 using UnityEngine.UIElements;
 
@@ -14,7 +15,11 @@ public sealed partial class CodexWindow
     private bool needsConversationRestore;
     private bool isScrollToLatestScheduled;
     private void OnEnable() => CodexWorkspaceStore.Instance.Changed += RefreshWorkspaceUi;
-    private void OnDisable() => CodexWorkspaceStore.Instance.Changed -= RefreshWorkspaceUi;
+    private void OnDisable()
+    {
+        CodexWorkspaceStore.Instance.Changed -= RefreshWorkspaceUi;
+        if (activeWindow == this) activeWindow = null;
+    }
     private void OnFocus() => BeginWorkspaceRefresh();
     private async void BeginWorkspaceRefresh()
     {
@@ -196,7 +201,49 @@ public sealed partial class CodexWindow
             if (conversation == null || conversation.contentContainer.childCount == 0) return;
             var latest = conversation.contentContainer[conversation.contentContainer.childCount - 1];
             conversation.ScrollTo(latest);
-        }).ExecuteLater(1);
+            conversation.verticalScroller.value = conversation.verticalScroller.highValue;
+        }).ExecuteLater(50);
+    }
+    internal static async Task<bool> RequestMcpApiApprovalAsync(string toolName, string summary, string arguments)
+    {
+        var completion = new TaskCompletionSource<bool>();
+        await CodexUnityEditorDispatcher.RunAsync(() =>
+        {
+            if (activeWindow == null || activeWindow.conversation == null)
+            {
+                completion.TrySetResult(false);
+                return 0;
+            }
+            var request = new CodexMcpApiApprovalRequest { ToolName = toolName, Summary = summary, Arguments = arguments, Respond = allowed => completion.TrySetResult(allowed) };
+            var card = CreateMcpApiApprovalCard(request);
+            activeWindow.conversation.Add(card);
+            activeWindow.ScrollConversationToLatest();
+            return 0;
+        });
+        return await completion.Task;
+    }
+    internal static async Task<string> RequestMcpElicitationAsync(string serverName, string message, string requestedSchema)
+    {
+        var completion = new TaskCompletionSource<string>();
+        await CodexUnityEditorDispatcher.RunAsync(() =>
+        {
+            if (activeWindow == null || activeWindow.conversation == null)
+            {
+                completion.TrySetResult("cancel");
+                return 0;
+            }
+            var request = new CodexMcpElicitationRequest
+            {
+                ServerName = serverName,
+                Message = message,
+                RequestedSchema = requestedSchema,
+                Respond = decision => completion.TrySetResult(decision)
+            };
+            activeWindow.conversation.Add(CreateMcpElicitationCard(request));
+            activeWindow.ScrollConversationToLatest();
+            return 0;
+        });
+        return await completion.Task;
     }
     private static string DisplayEffort(string effort)
     {

@@ -12,11 +12,14 @@ using UnityDebug = UnityEngine.Debug;
 public static class CodexAppServerClient
 {
     private static readonly SemaphoreSlim RequestGate = new SemaphoreSlim(1, 1);
+    private const int DefaultRequestTimeoutMilliseconds = 60000;
+    private const int TurnStartTimeoutMilliseconds = 300000;
     private const string AppServerProcessIdKey = "CodexUnity.AppServerProcessId";
     private const string AppServerProcessStartTicksKey = "CodexUnity.AppServerProcessStartTicks";
     private static Process sharedProcess;
     private static string sharedCwd;
     private static string sharedMcpEndpoint;
+    private static readonly HashSet<string> ResumedThreadIds = new HashSet<string>();
 
     public static async Task SendMessageAsync(string cwd, string threadId, string text, string model, string effort, Action<string> onAssistantDelta, Action<CodexApprovalRequest> onApprovalRequested, Action<CodexMcpElicitationRequest> onMcpElicitationRequested, Action<List<CodexFileChange>> onFileChanges)
     {
@@ -24,7 +27,13 @@ public static class CodexAppServerClient
         try
         {
             var process = await GetSharedProcessAsync(cwd);
-            await CallAsync(process, 2, "thread/resume", "{\"threadId\":\"" + Escape(threadId) + "\",\"cwd\":\"" + Escape(cwd) + "\"}");
+            // A fresh App Server must restore a persisted thread once before it can start a turn.
+            // Do not repeat this for every message, because repeated resumes can keep a writer attached.
+            if (!ResumedThreadIds.Contains(threadId))
+            {
+                await CallAsync(process, 2, "thread/resume", "{\"threadId\":\"" + Escape(threadId) + "\",\"cwd\":\"" + Escape(cwd) + "\"}");
+                ResumedThreadIds.Add(threadId);
+            }
             var settings = string.IsNullOrEmpty(model) ? string.Empty : ",\"model\":\"" + Escape(model) + "\"";
             if (!string.IsNullOrEmpty(effort)) settings += ",\"effort\":\"" + Escape(effort) + "\"";
             var started = await CallAsync(process, 3, "turn/start", "{\"threadId\":\"" + Escape(threadId) + "\",\"cwd\":\"" + Escape(cwd) + "\",\"input\":[{\"type\":\"text\",\"text\":\"" + Escape(text) + "\"}]" + settings + "}");
@@ -100,7 +109,8 @@ public static class CodexAppServerClient
         var mcpEndpoint = CodexUnityMcpBridge.Endpoint;
         if (sharedProcess != null && !sharedProcess.HasExited && sharedCwd == cwd && sharedMcpEndpoint == mcpEndpoint) return sharedProcess;
         StopOwnedAppServer();
-        sharedProcess = await StartAsync(mcpEndpoint); sharedCwd = cwd; sharedMcpEndpoint = mcpEndpoint;
+            sharedProcess = await StartAsync(mcpEndpoint); sharedCwd = cwd; sharedMcpEndpoint = mcpEndpoint;
+            ResumedThreadIds.Clear();
         SessionState.SetInt(AppServerProcessIdKey, sharedProcess.Id);
         SessionState.SetString(AppServerProcessStartTicksKey, sharedProcess.StartTime.ToUniversalTime().Ticks.ToString());
         await CallAsync(sharedProcess, 1, "initialize", "{\"clientInfo\":{\"name\":\"codex-unity\",\"version\":\"0.1.0\"}}");
@@ -138,6 +148,7 @@ public static class CodexAppServerClient
             sharedProcess = null;
             sharedCwd = null;
             sharedMcpEndpoint = null;
+            ResumedThreadIds.Clear();
             SessionState.EraseInt(AppServerProcessIdKey);
             SessionState.EraseString(AppServerProcessStartTicksKey);
         }
@@ -151,7 +162,7 @@ public static class CodexAppServerClient
         var exe = Path.Combine(install, "app", "resources", "codex.exe"); if (!File.Exists(exe)) throw new FileNotFoundException("未找到 Codex App Server。");
         // The App Server launches sibling helpers (such as codex-code-mode-host.exe) by relative path.
         // Keep its process directory at the installed resources folder; each request supplies the Unity project cwd explicitly.
-        var info = new ProcessStartInfo(exe) { WorkingDirectory = Path.GetDirectoryName(exe), UseShellExecute = false, RedirectStandardInput = true, RedirectStandardOutput = true, StandardInputEncoding = new UTF8Encoding(false), StandardOutputEncoding = new UTF8Encoding(false), CreateNoWindow = true };
+        var info = new ProcessStartInfo(exe) { WorkingDirectory = Path.GetDirectoryName(exe), UseShellExecute = false, RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true, StandardInputEncoding = new UTF8Encoding(false), StandardOutputEncoding = new UTF8Encoding(false), StandardErrorEncoding = new UTF8Encoding(false), CreateNoWindow = true };
         if (!string.IsNullOrEmpty(mcpEndpoint))
         {
             // This is a command-line configuration override, not a write to ~/.codex/config.toml.
@@ -159,16 +170,59 @@ public static class CodexAppServerClient
             info.ArgumentList.Add("mcp_servers.unity_editor.url=\"" + EscapeToml(mcpEndpoint) + "\"");
         }
         info.ArgumentList.Add("app-server"); info.ArgumentList.Add("--stdio");
-        return Process.Start(info) ?? throw new InvalidOperationException("无法启动 Codex App Server。");
+        var process = Process.Start(info) ?? throw new InvalidOperationException("无法启动 Codex App Server。");
+        process.ErrorDataReceived += (_, eventArgs) =>
+        {
+            if (!string.IsNullOrWhiteSpace(eventArgs.Data)) UnityDebug.LogWarning("[Codex Unity] App Server stderr: " + eventArgs.Data);
+        };
+        process.Exited += (_, __) => UnityDebug.LogWarning("[Codex Unity] App Server exited (code=" + process.ExitCode + ").");
+        process.EnableRaisingEvents = true;
+        process.BeginErrorReadLine();
+        return process;
     }
 
     private static string EscapeToml(string value) => value.Replace("\\", "\\\\").Replace("\"", "\\\"");
 
     private static async Task<JsonElement> CallAsync(Process process, int id, string method, string parameters)
     {
+        UnityDebug.Log("[Codex Unity] App Server request: " + method + " (id=" + id + ").");
         await process.StandardInput.WriteLineAsync("{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"method\":\"" + method + "\",\"params\":" + parameters + "}"); await process.StandardInput.FlushAsync();
-        var timeout = Task.Delay(60000);
-        while (true) { var read = process.StandardOutput.ReadLineAsync(); if (await Task.WhenAny(read, timeout) != read) throw new TimeoutException("Codex App Server 未在 60 秒内响应。"); var line = await read; if (string.IsNullOrEmpty(line)) continue; using var doc = JsonDocument.Parse(line); var root = doc.RootElement; if (!root.TryGetProperty("id", out var responseId) || responseId.GetInt32() != id) continue; if (root.TryGetProperty("error", out var error)) throw new InvalidOperationException(error.GetRawText()); return root.GetProperty("result").Clone(); }
+        var timeoutMilliseconds = method == "turn/start" ? TurnStartTimeoutMilliseconds : DefaultRequestTimeoutMilliseconds;
+        var timeout = Task.Delay(timeoutMilliseconds);
+        while (true)
+        {
+            var read = process.StandardOutput.ReadLineAsync();
+            if (await Task.WhenAny(read, timeout) != read)
+            {
+                UnityDebug.LogError("[Codex Unity] App Server timed out during " + method + " (id=" + id + "). Recycling the plugin-owned App Server before the next request.");
+                StopOwnedAppServer();
+                throw new TimeoutException("Codex App Server 未在 " + timeoutMilliseconds / 1000 + " 秒内响应：" + method + " (id=" + id + ")。已回收插件持有的 App Server，请重试；若持续发生，请检查桌面端是否占用同一聊天。");
+            }
+            var line = await read;
+            if (string.IsNullOrEmpty(line)) continue;
+            using var doc = JsonDocument.Parse(line);
+            var root = doc.RootElement;
+            if (root.TryGetProperty("method", out var requestMethod) && requestMethod.GetString() == "mcpServer/elicitation/request" && root.TryGetProperty("id", out var elicitationId) && root.TryGetProperty("params", out var elicitationParameters))
+            {
+                var serverName = Text(elicitationParameters, "serverName", Text(elicitationParameters, "serverId", "Unity MCP"));
+                var message = Text(elicitationParameters, "message", "Codex 请求继续使用 Unity MCP 工具。");
+                var schema = elicitationParameters.TryGetProperty("requestedSchema", out var requestedSchema) ? requestedSchema.GetRawText() : string.Empty;
+                UnityDebug.Log("[Codex Unity] App Server requested Unity MCP approval while waiting for " + method + ".");
+                var decision = await CodexWindow.RequestMcpElicitationAsync(serverName, message, schema);
+                await RespondToMcpElicitationRequestAsync(process, elicitationId.GetRawText(), decision);
+                timeout = Task.Delay(timeoutMilliseconds);
+                continue;
+            }
+            if (!root.TryGetProperty("id", out var responseId) || responseId.ValueKind != JsonValueKind.Number || responseId.GetInt32() != id)
+            {
+                var receivedMethod = root.TryGetProperty("method", out var notificationMethod) ? notificationMethod.GetString() : "response id=" + (root.TryGetProperty("id", out var receivedId) ? receivedId.GetRawText() : "none");
+                UnityDebug.Log("[Codex Unity] App Server message while awaiting " + method + ": " + receivedMethod + ".");
+                continue;
+            }
+            if (root.TryGetProperty("error", out var error)) throw new InvalidOperationException(error.GetRawText());
+            UnityDebug.Log("[Codex Unity] App Server response: " + method + " (id=" + id + ").");
+            return root.GetProperty("result").Clone();
+        }
     }
 
     private static async Task ReadAssistantReplyAsync(Process process, string threadId, string turnId, Action<string> onAssistantDelta, Action<CodexApprovalRequest> onApprovalRequested, Action<CodexMcpElicitationRequest> onMcpElicitationRequested, Action<List<CodexFileChange>> onFileChanges)

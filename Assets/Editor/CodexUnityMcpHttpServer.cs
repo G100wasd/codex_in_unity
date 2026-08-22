@@ -107,6 +107,13 @@ internal sealed class CodexUnityMcpHttpServer
                 var name = parameters.TryGetProperty("name", out var nameElement) ? nameElement.GetString() : string.Empty;
                 var arguments = parameters.TryGetProperty("arguments", out var argumentsElement) ? argumentsElement.Clone() : default;
                 UnityEngine.Debug.Log("[Codex Unity MCP] Tool started: " + name + ".");
+                if (CodexUnityMcpTools.RequiresApiApproval(name))
+                {
+                    UnityEngine.Debug.Log("[Codex Unity MCP] Tool is waiting for user approval; execution timeout is paused: " + name + ".");
+                    var allowed = await CodexWindow.RequestMcpApiApprovalAsync(name, CodexUnityMcpTools.GetMutationSummary(name), arguments.ValueKind == JsonValueKind.Undefined ? "{}" : arguments.GetRawText());
+                    if (!allowed) return "{\"content\":[{\"type\":\"text\",\"text\":\"The Unity API operation was denied by the user.\"}],\"isError\":true}";
+                    UnityEngine.Debug.Log("[Codex Unity MCP] Tool approved; starting 20-second execution timeout: " + name + ".");
+                }
                 var outputTask = CodexUnityMcpTools.InvokeAsync(name, arguments);
                 if (await Task.WhenAny(outputTask, Task.Delay(ToolTimeoutMilliseconds)) != outputTask)
                 {

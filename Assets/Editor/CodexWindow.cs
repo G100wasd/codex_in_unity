@@ -4,11 +4,13 @@ using UnityEngine.UIElements;
 
 public sealed partial class CodexWindow : EditorWindow
 {
+    private static CodexWindow activeWindow;
     [MenuItem("Codex/Open Codex")]
     public static void Open() => GetWindow<CodexWindow>("Codex");
 
     private void CreateGUI()
     {
+        activeWindow = this;
         rootVisualElement.Clear();
         rootVisualElement.style.flexDirection = FlexDirection.Row;
         rootVisualElement.style.flexGrow = 1;
