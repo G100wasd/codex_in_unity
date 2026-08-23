@@ -12,8 +12,10 @@ public sealed partial class CodexWindow
     private TextField messageInput;
     private Button sendButton;
     private Label activeThreadLabel, accountLabel, quotaLabel, mcpLabel, mcpCategoryLabel;
-    private VisualElement accountPanel, mcpPanel, quotaFill, mcpCategories, mcpCategoryPanel;
+    private VisualElement accountPanel, mcpPanel, quotaFill, mcpCategories, mcpCategoryPanel, mainPanel;
+    private bool isShowingSettingsPage, isCreatingThread;
     private ToolbarMenu modelMenu, effortMenu;
+    private Button newThreadButton;
 
     private VisualElement CreateSidebar()
     {
@@ -34,7 +36,7 @@ public sealed partial class CodexWindow
             style = { flexDirection = FlexDirection.Row }
         };
         threadHeader.Add(new Label("项目聊天池") { style = { flexGrow = 1 } }); 
-        threadHeader.Add(new Button(CreateNewThread) { text = "＋", tooltip = "为当前项目创建新聊天" }); 
+        newThreadButton = new Button(CreateNewThread) { text = "＋", tooltip = "为当前项目创建新聊天" }; threadHeader.Add(newThreadButton); 
         side.Add(threadHeader);
         threadList = new ScrollView { style = { flexGrow = 1, marginTop = 8 } }; 
         side.Add(threadList);
@@ -57,11 +59,10 @@ public sealed partial class CodexWindow
         mcpPanel = new VisualElement { style = { display = DisplayStyle.None, backgroundColor = new Color(.10f, .16f, .20f), paddingLeft = 8, paddingRight = 8, paddingTop = 8, paddingBottom = 8 } };
         mcpLabel = new Label { style = { whiteSpace = WhiteSpace.Normal, fontSize = 10 } }; mcpPanel.Add(mcpLabel);
         mcpCategories = new VisualElement { style = { marginTop = 6 } }; mcpPanel.Add(mcpCategories); side.Add(mcpPanel);
-        mcpCategoryPanel = new VisualElement { style = { display = DisplayStyle.None, backgroundColor = new Color(.08f, .13f, .17f), paddingLeft = 8, paddingRight = 8, paddingTop = 8, paddingBottom = 8 } };
-        mcpCategoryLabel = new Label { style = { whiteSpace = WhiteSpace.Normal, fontSize = 10 } }; mcpCategoryPanel.Add(mcpCategoryLabel); side.Add(mcpCategoryPanel);
         var bottomActions = new VisualElement { style = { flexDirection = FlexDirection.Row, marginTop = 6, height = 22 } };
-        bottomActions.Add(new Button(ToggleAccountPanel) { text = "◎", tooltip = "查看账户与额度", style = { flexGrow = 1, marginRight = 3 } });
-        bottomActions.Add(new Button(ToggleMcpPanel) { text = "⌁", tooltip = "查看 Unity MCP 端口与工具", style = { flexGrow = 1, marginLeft = 3 } });
+        bottomActions.Add(new Button(ToggleAccountPanel) { text = "◎", tooltip = "查看账户与额度", style = { flexGrow = 1, flexBasis = 0, marginRight = 2 } });
+        bottomActions.Add(new Button(ToggleMcpPanel) { text = "⌁", tooltip = "查看 Unity MCP 端口与工具", style = { flexGrow = 1, flexBasis = 0, marginLeft = 1, marginRight = 1 } });
+        bottomActions.Add(new Button(ShowSettingsPage) { text = "⚙", tooltip = "打开设置", style = { flexGrow = 1, flexBasis = 0, marginLeft = 2 } });
         side.Add(bottomActions);
         return side;
     }
@@ -81,6 +82,7 @@ public sealed partial class CodexWindow
                 paddingBottom = 12
             }
         };
+        mainPanel = main;
         activeThreadLabel = new Label("请选择或新建对话")
         {
             style =
@@ -116,7 +118,31 @@ public sealed partial class CodexWindow
         modelMenu = new ToolbarMenu { text = "正在加载模型…" };
         effortMenu = new ToolbarMenu { text = "思考：—" };
         options.Add(modelMenu);
-        options.Add(effortMenu); composer.Add(options); main.Add(composer); return main;
+        options.Add(effortMenu); composer.Add(options); main.Add(composer);
+
+        // Category details float over the right side of the chat area instead
+        // of expanding the narrow sidebar. The ScrollView keeps long API lists usable.
+        mcpCategoryPanel = new VisualElement
+        {
+            style =
+            {
+                display = DisplayStyle.None, position = Position.Absolute, right = 14, top = 48, bottom = 72, width = 310,
+                backgroundColor = new Color(.08f, .13f, .17f), paddingLeft = 10, paddingRight = 10, paddingTop = 9, paddingBottom = 9,
+                borderTopWidth = 1, borderBottomWidth = 1, borderLeftWidth = 1, borderRightWidth = 1,
+                borderTopColor = new Color(.25f, .42f, .52f), borderBottomColor = new Color(.25f, .42f, .52f), borderLeftColor = new Color(.25f, .42f, .52f), borderRightColor = new Color(.25f, .42f, .52f)
+            }
+        };
+        mcpCategoryPanel.Add(new Label("MCP API 分类") { style = { unityFontStyleAndWeight = FontStyle.Bold, flexShrink = 0 } });
+        var categoryScroll = new ScrollView { style = { flexGrow = 1, marginTop = 6 } };
+        mcpCategoryLabel = new Label { style = { whiteSpace = WhiteSpace.Normal, fontSize = 10 } }; categoryScroll.Add(mcpCategoryLabel); mcpCategoryPanel.Add(categoryScroll);
+        main.Add(mcpCategoryPanel);
+        main.RegisterCallback<PointerDownEvent>(evt =>
+        {
+            if (mcpCategoryPanel.style.display == DisplayStyle.None) return;
+            var target = evt.target as VisualElement;
+            if (target == null || !mcpCategoryPanel.Contains(target)) mcpCategoryPanel.style.display = DisplayStyle.None;
+        });
+        return main;
     }
     private static VisualElement CreateMessage(string sender, string text) { var box = new VisualElement { style = { marginBottom = 8, paddingLeft = 8, paddingTop = 6, paddingBottom = 6 } }; box.Add(new Label(sender)); box.Add(new Label(text) { style = { whiteSpace = WhiteSpace.Normal } }); return box; }
     private static VisualElement CreateStreamingMessage(string sender, out Label content)

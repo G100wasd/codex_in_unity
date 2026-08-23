@@ -49,6 +49,7 @@ public static class CodexUnityMcpBridge
     {
         if (!IsRunning && !SessionState.GetBool(ShouldRunKey, false)) return;
         SessionState.SetBool(RestartAfterReloadKey, true);
+        CodexUnityOperationJournal.InterruptRunning("Unity Domain Reload interrupted the operation; re-check project state before retrying.");
         Debug.Log("[Codex Unity MCP] Bridge interrupted: Unity is recompiling/reloading Editor assemblies. Endpoint was " + Endpoint + ".");
         StopInternal(false, "assembly reload");
     }

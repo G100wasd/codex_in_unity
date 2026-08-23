@@ -1,8 +1,10 @@
 using System;
 using System.IO;
 using System.Threading.Tasks;
+using UnityEditor;
 using UnityEngine;
 using UnityEngine.UIElements;
+using EditorPopupWindow = UnityEditor.PopupWindow;
 
 public sealed partial class CodexWindow
 {
@@ -13,7 +15,6 @@ public sealed partial class CodexWindow
     private string selectedEffort;
     private bool isSelectingDefaultThread;
     private bool needsConversationRestore;
-    private bool isScrollToLatestScheduled;
     private void OnEnable() => CodexWorkspaceStore.Instance.Changed += RefreshWorkspaceUi;
     private void OnDisable()
     {
@@ -27,6 +28,8 @@ public sealed partial class CodexWindow
         try
         {
             var fetched = await CodexAppServerClient.FetchAsync(GetProjectRoot());
+            fetched = CodexWorkspaceStore.Instance.MergeKnownThreads(fetched);
+            CodexUnityTaskRecovery.CancelIfThreadMissing(fetched);
             CodexWorkspaceStore.Instance.Set(fetched);
             Debug.Log("[Codex Unity] Chat pool refreshed: " + fetched.Threads.Count + " thread(s).");
             RestoreConversationWhenReady(fetched);
@@ -38,7 +41,14 @@ public sealed partial class CodexWindow
     {
         if (threadList == null || accountLabel == null) return;
         var state = CodexWorkspaceStore.Instance.Snapshot; threadList.Clear();
-        foreach (var thread in state.Threads) { var item = thread; threadList.Add(new Button(() => SelectThread(item)) { text = item.Name }); }
+        var recoveryLocked = CodexUnityTaskRecovery.BlocksUserInteraction;
+        if (isCreatingThread)
+        {
+            var creating = new Button { text = "正在创建聊天…", tooltip = "正在等待 Codex App Server 返回真实聊天 ID" };
+            creating.SetEnabled(false);
+            threadList.Add(creating);
+        }
+        foreach (var thread in state.Threads) { var item = thread; var button = new Button(() => SelectThread(item)) { text = item.Name }; button.SetEnabled(!recoveryLocked); button.AddManipulator(new ContextualMenuManipulator(evt => PopulateThreadMenu(evt, item))); threadList.Add(button); }
         var selectedThread = state.Threads.Find(thread => thread.Id == selectedThreadId);
         if (selectedThread != null && activeThreadLabel != null) activeThreadLabel.text = selectedThread.Name;
         RefreshModelMenus(state);
@@ -49,7 +59,11 @@ public sealed partial class CodexWindow
             quotaLabel.text = "可用额度：暂无法从 Codex App Server 获取";
             quotaFill.style.width = Length.Percent(0);
         }
-        var hasSelection = selectedThread != null; messageInput.SetEnabled(hasSelection); sendButton.SetEnabled(hasSelection);
+        var hasSelection = selectedThread != null;
+        if (newThreadButton != null) newThreadButton.SetEnabled(!recoveryLocked && !isCreatingThread);
+        messageInput.SetEnabled(hasSelection && !recoveryLocked); sendButton.SetEnabled(hasSelection && !recoveryLocked);
+        modelMenu.SetEnabled(!recoveryLocked); effortMenu.SetEnabled(!recoveryLocked); if (newThreadButton != null) newThreadButton.SetEnabled(!recoveryLocked);
+        if (recoveryLocked && activeThreadLabel != null) activeThreadLabel.tooltip = CodexUnityTaskRecovery.BlockingMessage;
         RestoreConversationWhenReady(state);
     }
     private void RestoreConversationWhenReady(CodexWorkspaceSnapshot state)
@@ -67,6 +81,7 @@ public sealed partial class CodexWindow
     }
     private async void SelectThread(CodexThreadSummary thread)
     {
+        RestoreChatPageIfNeeded();
         selectedThreadId = thread.Id;
         needsConversationRestore = false;
         activeThreadLabel.text = thread.Name;
@@ -92,16 +107,47 @@ public sealed partial class CodexWindow
     }
     private async void CreateNewThread()
     {
+        if (isCreatingThread) return;
+        isCreatingThread = true;
+        RefreshWorkspaceUi();
         try
         {
             var thread = await CodexAppServerClient.CreateThreadAsync(GetProjectRoot());
             var state = CodexWorkspaceStore.Instance.Snapshot;
+            isCreatingThread = false;
             state.Threads.Insert(0, thread);
             CodexWorkspaceStore.Instance.Set(state);
             Debug.Log("[Codex Unity] Created thread: " + thread.Id + ".");
             SelectThread(thread);
         }
-        catch (Exception error) { var state = CodexWorkspaceStore.Instance.Snapshot; state.Error = error.Message; CodexWorkspaceStore.Instance.Set(state); Debug.LogError("[Codex Unity] Create thread failed: " + error); }
+        catch (Exception error) { isCreatingThread = false; var state = CodexWorkspaceStore.Instance.Snapshot; state.Error = error.Message; CodexWorkspaceStore.Instance.Set(state); Debug.LogError("[Codex Unity] Create thread failed: " + error); }
+    }
+    private void PopulateThreadMenu(ContextualMenuPopulateEvent evt, CodexThreadSummary thread)
+    {
+        evt.menu.AppendAction("重命名", _ => ShowRenameThreadPopup(evt.mousePosition, thread));
+        evt.menu.AppendAction("删除聊天", _ => DeleteThread(thread));
+    }
+    private void ShowRenameThreadPopup(Vector2 mousePosition, CodexThreadSummary thread)
+    {
+        EditorPopupWindow.Show(new Rect(mousePosition, Vector2.zero), new CodexThreadRenamePopup(thread.Name, name => RenameThread(thread, name)));
+    }
+    private async void RenameThread(CodexThreadSummary thread, string name)
+    {
+        try
+        {
+            await CodexAppServerClient.RenameThreadAsync(GetProjectRoot(), thread.Id, name);
+            CodexWorkspaceStore.Instance.RenameThread(thread.Id, name.Trim());
+            if (selectedThreadId == thread.Id) activeThreadLabel.text = name.Trim();
+            Debug.Log("[Codex Unity] Renamed thread " + thread.Id + ".");
+            rootVisualElement.schedule.Execute(BeginWorkspaceRefresh).ExecuteLater(100);
+        }
+        catch (Exception error) { Debug.LogError("[Codex Unity] Rename thread failed: " + error); }
+    }
+    private async void DeleteThread(CodexThreadSummary thread)
+    {
+        if (!EditorUtility.DisplayDialog("删除聊天", "确定永久删除“" + thread.Name + "”吗？此操作不可恢复。", "删除", "取消")) return;
+        try { await CodexAppServerClient.DeleteThreadAsync(GetProjectRoot(), thread.Id); CodexWorkspaceStore.Instance.RemoveThread(thread.Id); if (selectedThreadId == thread.Id) { selectedThreadId = null; conversation.Clear(); activeThreadLabel.text = "请选择或新建对话"; } Debug.Log("[Codex Unity] Deleted thread " + thread.Id + "."); BeginWorkspaceRefresh(); }
+        catch (Exception error) { Debug.LogError("[Codex Unity] Delete thread failed: " + error); }
     }
     private async void SendMessage()
     {
@@ -109,6 +155,7 @@ public sealed partial class CodexWindow
         if (string.IsNullOrEmpty(text) || string.IsNullOrEmpty(selectedThreadId)) return;
         Debug.Log("[Codex Unity] Sending to thread " + selectedThreadId + ": " + text);
         messageInput.SetEnabled(false); sendButton.SetEnabled(false);
+        CodexUnityTaskRecovery.Begin(selectedThreadId, GetProjectRoot(), selectedModelId, selectedEffort);
         try
         {
             conversation.Add(CreateMessage("你", text));
@@ -142,6 +189,7 @@ public sealed partial class CodexWindow
                     ScrollConversationToLatest();
                 });
             messageInput.value = string.Empty;
+            CodexUnityTaskRecovery.CompleteNormally();
             Debug.Log("[Codex Unity] Message and assistant reply completed for thread " + selectedThreadId + ".");
         }
         catch (Exception error)
@@ -193,16 +241,21 @@ public sealed partial class CodexWindow
     }
     private void ScrollConversationToLatest()
     {
-        if (conversation == null || isScrollToLatestScheduled) return;
-        isScrollToLatestScheduled = true;
+        if (conversation == null) return;
+        ScheduleConversationScroll(30);
+        ScheduleConversationScroll(160);
+        ScheduleConversationScroll(420);
+    }
+    private void ScheduleConversationScroll(long delayMilliseconds)
+    {
+        if (conversation == null) return;
         conversation.schedule.Execute(() =>
         {
-            isScrollToLatestScheduled = false;
             if (conversation == null || conversation.contentContainer.childCount == 0) return;
             var latest = conversation.contentContainer[conversation.contentContainer.childCount - 1];
             conversation.ScrollTo(latest);
             conversation.verticalScroller.value = conversation.verticalScroller.highValue;
-        }).ExecuteLater(50);
+        }).ExecuteLater(delayMilliseconds);
     }
     internal static async Task<bool> RequestMcpApiApprovalAsync(string toolName, string summary, string arguments, bool isLongRunning = false)
     {
@@ -245,6 +298,31 @@ public sealed partial class CodexWindow
         });
         return await completion.Task;
     }
+    internal static void NotifyRecoveryCompleted(string threadId)
+    {
+        if (activeWindow == null) return;
+        activeWindow.selectedThreadId = threadId;
+        activeWindow.needsConversationRestore = true;
+        activeWindow.BeginWorkspaceRefresh();
+    }
+    internal static bool IsReadyForTaskRecovery(string threadId)
+    {
+        if (activeWindow == null || activeWindow.rootVisualElement.panel == null || activeWindow.conversation == null) return false;
+        if (activeWindow.isRefreshing) return false;
+        var thread = CodexWorkspaceStore.Instance.Snapshot.Threads.Find(item => item.Id == threadId);
+        if (thread == null)
+        {
+            activeWindow.BeginWorkspaceRefresh();
+            return false;
+        }
+        if (activeWindow.selectedThreadId != threadId)
+        {
+            activeWindow.needsConversationRestore = false;
+            activeWindow.SelectThread(thread);
+            return false;
+        }
+        return true;
+    }
     private static string DisplayEffort(string effort)
     {
         switch (effort)
@@ -280,6 +358,25 @@ public sealed partial class CodexWindow
             var item = category;
             mcpCategories.Add(new Button(() => ShowMcpCategory(item)) { text = item.Name + "（" + item.Tools.Length + "）", tooltip = item.Description, style = { marginTop = 3 } });
         }
+    }
+    private void ShowSettingsPage()
+    {
+        if (mainPanel == null) return;
+        accountPanel.style.display = DisplayStyle.None;
+        mcpPanel.style.display = DisplayStyle.None;
+        mcpCategoryPanel.style.display = DisplayStyle.None;
+        mainPanel.Clear();
+        isShowingSettingsPage = true;
+    }
+    private void RestoreChatPageIfNeeded()
+    {
+        if (!isShowingSettingsPage || mainPanel == null || mainPanel.parent == null) return;
+        var parent = mainPanel.parent;
+        var index = parent.IndexOf(mainPanel);
+        parent.Remove(mainPanel);
+        parent.Insert(index, CreateMainPanel());
+        isShowingSettingsPage = false;
+        RefreshWorkspaceUi();
     }
     private void ShowMcpCategory(CodexUnityMcpTools.ToolCategory category)
     {

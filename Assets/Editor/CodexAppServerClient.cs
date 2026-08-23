@@ -57,12 +57,18 @@ public static class CodexAppServerClient
         await RequestGate.WaitAsync(); try {
         var process = await GetSharedProcessAsync(cwd);
         var account = await CallAsync(process, 2, "account/read", "{\"refreshToken\":false}");
+        // The default list contains interactive client threads. Unity creates
+        // threads with the appServer source, so fetch that source explicitly too.
+        // Without this merge, the refresh after a rename overwrites the local
+        // entry with a list that does not contain the renamed Unity thread.
         var threads = await CallAsync(process, 3, "thread/list", "{\"cwd\":\"" + Escape(cwd) + "\",\"limit\":100}");
+        var unityThreads = await CallAsync(process, 4, "thread/list", "{\"cwd\":\"" + Escape(cwd) + "\",\"limit\":100,\"sourceKinds\":[\"appServer\"]}");
         var snapshot = new CodexWorkspaceSnapshot { Account = ParseAccount(account) };
-        if (threads.TryGetProperty("data", out var data)) foreach (var item in data.EnumerateArray()) snapshot.Threads.Add(new CodexThreadSummary { Id = Text(item, "id"), Name = Text(item, "name", "未命名对话"), Preview = Text(item, "preview") });
+        AddThreads(snapshot, threads);
+        AddThreads(snapshot, unityThreads);
         try
         {
-            var models = await CallAsync(process, 4, "model/list", "{\"limit\":100}");
+            var models = await CallAsync(process, 5, "model/list", "{\"limit\":100}");
             if (models.TryGetProperty("data", out var modelData)) foreach (var item in modelData.EnumerateArray())
             {
                 if (item.TryGetProperty("hidden", out var hidden) && hidden.GetBoolean()) continue;
@@ -73,6 +79,34 @@ public static class CodexAppServerClient
         }
         catch { }
         return snapshot; } finally { RequestGate.Release(); }
+    }
+
+    private static void AddThreads(CodexWorkspaceSnapshot snapshot, JsonElement response)
+    {
+        if (!response.TryGetProperty("data", out var data)) return;
+
+        foreach (var item in data.EnumerateArray())
+        {
+            var id = Text(item, "id");
+            if (string.IsNullOrWhiteSpace(id) || snapshot.Threads.Exists(thread => thread.Id == id)) continue;
+
+            snapshot.Threads.Add(new CodexThreadSummary
+            {
+                Id = id,
+                Name = Text(item, "name", "未命名对话"),
+                Preview = Text(item, "preview")
+            });
+        }
+    }
+    public static async Task RenameThreadAsync(string cwd, string threadId, string name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("聊天名称不能为空。");
+        await RequestGate.WaitAsync(); try { var process = await GetSharedProcessAsync(cwd); await CallAsync(process, 2, "thread/name/set", "{\"threadId\":\"" + Escape(threadId) + "\",\"name\":\"" + Escape(name.Trim()) + "\"}"); }
+        finally { RequestGate.Release(); }
+    }
+    public static async Task DeleteThreadAsync(string cwd, string threadId)
+    {
+        await RequestGate.WaitAsync(); try { var process = await GetSharedProcessAsync(cwd); await CallAsync(process, 2, "thread/delete", "{\"threadId\":\"" + Escape(threadId) + "\"}"); } finally { RequestGate.Release(); }
     }
     public static async Task<List<CodexChatMessage>> ReadThreadAsync(string cwd, string threadId)
     {

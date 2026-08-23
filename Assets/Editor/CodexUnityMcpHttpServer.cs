@@ -107,20 +107,25 @@ internal sealed class CodexUnityMcpHttpServer
                 var name = parameters.TryGetProperty("name", out var nameElement) ? nameElement.GetString() : string.Empty;
                 var arguments = parameters.TryGetProperty("arguments", out var argumentsElement) ? argumentsElement.Clone() : default;
                 UnityEngine.Debug.Log("[Codex Unity MCP] Tool started: " + name + ".");
+                if ((UnityEditor.EditorApplication.isCompiling || UnityEditor.EditorApplication.isUpdating) && name != "unity_get_bridge_status" && name != "unity_get_interrupted_operations" && name != "unity_get_compilation_status")
+                    return "{\"content\":[{\"type\":\"text\",\"text\":\"Unity is compiling or updating assets. The requested operation was not started; wait for unity_get_bridge_status to report Ready for write tools: True.\"}],\"isError\":true}";
+                var operationId = CodexUnityMcpTools.RequiresApiApproval(name) ? CodexUnityOperationJournal.Begin(name, arguments.ValueKind == JsonValueKind.Undefined ? "{}" : arguments.GetRawText()) : null;
                 if (CodexUnityMcpTools.RequiresApiApproval(name))
                 {
                     UnityEngine.Debug.Log("[Codex Unity MCP] Tool is waiting for user approval; execution timeout is paused: " + name + ".");
                     var allowed = await CodexWindow.RequestMcpApiApprovalAsync(name, CodexUnityMcpTools.GetMutationSummary(name), arguments.ValueKind == JsonValueKind.Undefined ? "{}" : arguments.GetRawText(), CodexUnityMcpTools.IsLongRunning(name));
-                    if (!allowed) return "{\"content\":[{\"type\":\"text\",\"text\":\"The Unity API operation was denied by the user.\"}],\"isError\":true}";
+                    if (!allowed) { CodexUnityOperationJournal.Complete(operationId, true, "Denied by user."); return "{\"content\":[{\"type\":\"text\",\"text\":\"The Unity API operation was denied by the user.\"}],\"isError\":true}"; }
                     UnityEngine.Debug.Log("[Codex Unity MCP] Tool approved; starting 20-second execution timeout: " + name + ".");
                 }
                 var outputTask = CodexUnityMcpTools.InvokeAsync(name, arguments);
                 if (await Task.WhenAny(outputTask, Task.Delay(ToolTimeoutMilliseconds)) != outputTask)
                 {
+                    CodexUnityOperationJournal.InterruptRunning("Tool response timed out; verify Unity state before retrying.");
                     UnityEngine.Debug.LogError("[Codex Unity MCP] Tool timed out after " + ToolTimeoutMilliseconds / 1000 + " seconds: " + name + ".");
                     return "{\"content\":[{\"type\":\"text\",\"text\":\"Unity tool timed out after 20 seconds: " + Escape(name) + ". The Unity Editor may be compiling or reloading.\"}],\"isError\":true}";
                 }
                 var output = await outputTask;
+                CodexUnityOperationJournal.Complete(operationId, output.IsError, output.Text);
                 UnityEngine.Debug.Log("[Codex Unity MCP] Tool completed: " + name + " (isError=" + output.IsError + ").");
                 return "{\"content\":[{\"type\":\"text\",\"text\":" + JsonString(output.Text) + "}],\"isError\":" + (output.IsError ? "true" : "false") + "}";
             default:
