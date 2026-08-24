@@ -1,0 +1,230 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="AutoImportSettings">
+    <option name="autoReloadType" value="SELECTIVE" />
+  </component>
+  <component name="CMakeProjectFlavorService">
+    <option name="flavorId" value="CMakePlainProjectFlavor" />
+  </component>
+  <component name="CMakeSettings">
+    <configurations />
+  </component>
+  <component name="ChangeListManager">
+    <list default="true" id="3ca0e043-ef03-4462-ab73-5bf17afd1008" name="更改" comment="">
+      <change beforePath="$PROJECT_DIR$/Assets/Editor.meta" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Assets/Editor/CodexAppServerClient.cs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Assets/Editor/CodexAppServerClient.cs.meta" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Assets/Editor/CodexThreadRenamePopup.cs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Assets/Editor/CodexThreadRenamePopup.cs.meta" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Assets/Editor/CodexUnityEditorDispatcher.cs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Assets/Editor/CodexUnityEditorDispatcher.cs.meta" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Assets/Editor/CodexUnityMcpBridge.cs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Assets/Editor/CodexUnityMcpBridge.cs.meta" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Assets/Editor/CodexUnityMcpHttpServer.cs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Assets/Editor/CodexUnityMcpHttpServer.cs.meta" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Assets/Editor/CodexUnityMcpTools.cs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Assets/Editor/CodexUnityMcpTools.cs.meta" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Assets/Editor/CodexUnityOperationJournal.cs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Assets/Editor/CodexUnityOperationJournal.cs.meta" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Assets/Editor/CodexUnityTaskRecovery.cs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Assets/Editor/CodexUnityTaskRecovery.cs.meta" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Assets/Editor/CodexWindow.Interactions.cs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Assets/Editor/CodexWindow.Interactions.cs.meta" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Assets/Editor/CodexWindow.UI.cs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Assets/Editor/CodexWindow.UI.cs.meta" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Assets/Editor/CodexWindow.cs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Assets/Editor/CodexWindow.cs.meta" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Assets/Editor/CodexWorkspaceStore.cs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Assets/Editor/CodexWorkspaceStore.cs.meta" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Assets/Scenes/SampleScene.unity" beforeDir="false" afterPath="$PROJECT_DIR$/Assets/Scenes/SampleScene.unity" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Packages/manifest.json" beforeDir="false" afterPath="$PROJECT_DIR$/Packages/manifest.json" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Packages/packages-lock.json" beforeDir="false" afterPath="$PROJECT_DIR$/Packages/packages-lock.json" afterDir="false" />
+    </list>
+    <option name="SHOW_DIALOG" value="false" />
+    <option name="HIGHLIGHT_CONFLICTS" value="true" />
+    <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
+    <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="EmbeddingIndexingInfo">
+    <option name="cachedIndexableFilesCount" value="4" />
+  </component>
+  <component name="Git.Settings">
+    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
+  </component>
+  <component name="HighlightingSettingsPerFile">
+    <setting file="file://$USER_HOME$/Desktop/CodexWorkspaceProbe.cs" root0="FORCE_HIGHLIGHTING" />
+  </component>
+  <component name="McpProjectServerCommands">
+    <commands />
+    <urls />
+  </component>
+  <component name="NextEditCompletionFeaturesState">
+    <decayedCancelled>
+      <entry key="MS100" value="1.9167438152339773E-269" />
+      <entry key="MS500" value="1.8051479983157783E-54" />
+      <entry key="S2" value="3.665457637631917E-14" />
+      <entry key="S5" value="4.226682721987814E-6" />
+      <entry key="S10" value="0.00217868937652627" />
+      <entry key="S30" value="0.27072353133023264" />
+      <entry key="S60" value="1.2021894182162982" />
+      <entry key="M2" value="2.6523213552273384" />
+      <entry key="M5" value="4.316863417612411" />
+      <entry key="M10" value="5.087159089059503" />
+      <entry key="M15" value="5.374364459949275" />
+      <entry key="M30" value="5.6783125394904745" />
+      <entry key="H1" value="5.836874248122717" />
+      <entry key="H2" value="5.917858335295106" />
+      <entry key="H4" value="5.958783421715176" />
+      <entry key="D1" value="5.993110238155424" />
+      <entry key="W1" value="5.999015249205051" />
+    </decayedCancelled>
+    <decayedSelected>
+      <entry key="MS100" value="1.0" />
+      <entry key="MS500" value="1.0000000087020353" />
+      <entry key="S2" value="1.009658400475945" />
+      <entry key="S5" value="1.1563011190816856" />
+      <entry key="S10" value="1.395388208964043" />
+      <entry key="S30" value="1.778908799255526" />
+      <entry key="S60" value="2.1469939714562534" />
+      <entry key="M2" value="2.680994526673418" />
+      <entry key="M5" value="3.321544024039027" />
+      <entry key="M10" value="3.6284602557660404" />
+      <entry key="M15" value="3.7444708587113276" />
+      <entry key="M30" value="3.86813912536088" />
+      <entry key="H1" value="3.933010595002271" />
+      <entry key="H2" value="3.9662360616190204" />
+      <entry key="H4" value="3.983050151593773" />
+      <entry key="D1" value="3.997165548795832" />
+      <entry key="W1" value="3.9995948456835166" />
+    </decayedSelected>
+    <decayedShown>
+      <entry key="MS100" value="2.835290706164173E-7" />
+      <entry key="MS500" value="0.04903651007265651" />
+      <entry key="S2" value="0.4785059136804338" />
+      <entry key="S5" value="0.8841436371269541" />
+      <entry key="S10" value="1.2422948141179817" />
+      <entry key="S30" value="1.9880809592334958" />
+      <entry key="S60" value="3.3107945058180723" />
+      <entry key="M2" value="5.308206068291631" />
+      <entry key="M5" value="7.625556033239271" />
+      <entry key="M10" value="8.708529981243746" />
+      <entry key="M15" value="9.113942777598478" />
+      <entry key="M30" value="9.543917025310346" />
+      <entry key="H1" value="9.768594399733573" />
+      <entry key="H2" value="9.883443260575275" />
+      <entry key="H4" value="9.941506509451271" />
+      <entry key="D1" value="9.99022106711395" />
+      <entry key="W1" value="9.99860227262669" />
+    </decayedShown>
+  </component>
+  <component name="ProjectColorInfo"><![CDATA[{
+  "associatedIndex": 6,
+  "fromUser": false
+}]]></component>
+  <component name="ProjectId" id="3IEoET4779q9O330AkUjXY9rLWT" />
+  <component name="ProjectViewState">
+    <option name="hideEmptyMiddlePackages" value="true" />
+    <option name="showLibraryContents" value="true" />
+  </component>
+  <component name="PropertiesComponent"><![CDATA[{
+  "keyToString": {
+    "ModuleVcsDetector.initialDetectionPerformed": "true",
+    "RunOnceActivity.MCP Project settings loaded": "true",
+    "RunOnceActivity.ShowReadmeOnStart": "true",
+    "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
+    "RunOnceActivity.cidr.known.project.marker": "true",
+    "RunOnceActivity.git.unshallow": "true",
+    "RunOnceActivity.readMode.enableVisualFormatting": "true",
+    "RunOnceActivity.typescript.service.memoryLimit.init": "true",
+    "cidr.known.project.marker": "true",
+    "codeWithMe.voiceChat.enabledByDefault": "false",
+    "git-widget-placeholder": "main",
+    "node.js.detected.package.eslint": "true",
+    "node.js.detected.package.tslint": "true",
+    "node.js.selected.package.eslint": "(autodetect)",
+    "node.js.selected.package.tslint": "(autodetect)",
+    "nodejs_package_manager_path": "npm",
+    "vue.rearranger.settings.migration": "true"
+  }
+}]]></component>
+  <component name="RunManager" selected="附加到 Unity 编辑器.附加到 Unity 编辑器">
+    <configuration name="启动 Unity" type="RunUnityExe" factoryName="Unity Executable">
+      <option name="EXE_PATH" value="C:\Program Files\Unity\Hub\Editor\6000.5.5f1\Editor\Unity.exe" />
+      <option name="PROGRAM_PARAMETERS" value="-projectPath G:\GitHubDeskTop\.ProjectTest\PluginTest\codex_in_unity -debugCodeOptimization" />
+      <option name="WORKING_DIRECTORY" value="G:\GitHubDeskTop\.ProjectTest\PluginTest\codex_in_unity" />
+      <option name="PASS_PARENT_ENVS" value="1" />
+      <option name="ENV_FILE_PATHS" value="" />
+      <option name="REDIRECT_INPUT_PATH" value="" />
+      <option name="MIXED_MODE_DEBUG" value="0" />
+      <method v="2" />
+    </configuration>
+    <configuration name="单元测试(批处理模式)" type="RunUnityExe" factoryName="Unity Executable">
+      <option name="EXE_PATH" value="C:\Program Files\Unity\Hub\Editor\6000.5.5f1\Editor\Unity.exe" />
+      <option name="PROGRAM_PARAMETERS" value="-runTests -batchmode -projectPath G:\GitHubDeskTop\.ProjectTest\PluginTest\codex_in_unity -testResults Logs/results.xml -logFile Logs/Editor.log -testPlatform EditMode -debugCodeOptimization" />
+      <option name="WORKING_DIRECTORY" value="G:\GitHubDeskTop\.ProjectTest\PluginTest\codex_in_unity" />
+      <option name="PASS_PARENT_ENVS" value="1" />
+      <option name="ENV_FILE_PATHS" value="" />
+      <option name="REDIRECT_INPUT_PATH" value="" />
+      <option name="MIXED_MODE_DEBUG" value="0" />
+      <method v="2" />
+    </configuration>
+    <configuration name="附加到 Unity 编辑器" type="UNITY_DEBUG_RUN_CONFIGURATION" factoryName="Unity Debug" show_console_on_std_err="false" show_console_on_std_out="false" port="50000" address="localhost" useMixedMode="false">
+      <option name="allowRunningInParallel" value="false" />
+      <option name="listenPortForConnections" value="false" />
+      <option name="pid" />
+      <option name="projectPathOnTarget" />
+      <option name="runtimes">
+        <list />
+      </option>
+      <option name="selectedOptions">
+        <list />
+      </option>
+      <method v="2" />
+    </configuration>
+    <configuration name="附加到" type="UnityDevicePlayer" factoryName="UnityAttachToDevicePlayer">
+      <method v="2" />
+    </configuration>
+  </component>
+  <component name="TaskManager">
+    <task active="true" id="Default" summary="默认任务">
+      <changelist id="3ca0e043-ef03-4462-ab73-5bf17afd1008" name="更改" comment="" />
+      <created>1787338978383</created>
+      <option name="number" value="Default" />
+      <option name="presentableId" value="Default" />
+      <updated>1787338978383</updated>
+      <workItem from="1787338980234" duration="11900000" />
+    </task>
+    <servers />
+  </component>
+  <component name="TypeScriptGeneratedFilesManager">
+    <option name="version" value="3" />
+  </component>
+  <component name="UnityProjectConfiguration" hasMinimizedUI="true" />
+  <component name="UnityProjectDiscoverer">
+    <option name="hasUnityReference" value="true" />
+    <option name="unityProject" value="true" />
+    <option name="unityProjectFolder" value="true" />
+  </component>
+  <component name="UnityUnitTestConfiguration" currentTestLauncher="Both" />
+  <component name="VcsManagerConfiguration">
+    <option name="CLEAR_INITIAL_COMMIT_MESSAGE" value="true" />
+  </component>
+  <component name="XDebuggerManager">
+    <breakpoint-manager>
+      <breakpoints>
+        <breakpoint enabled="true" type="DotNet_Exception_Breakpoints">
+          <properties exception="System.OperationCanceledException" breakIfHandledByOtherCode="false" displayValue="System.OperationCanceledException" />
+          <option name="timeStamp" value="1" />
+        </breakpoint>
+        <breakpoint enabled="true" type="DotNet_Exception_Breakpoints">
+          <properties exception="System.Threading.Tasks.TaskCanceledException" breakIfHandledByOtherCode="false" displayValue="System.Threading.Tasks.TaskCanceledException" />
+          <option name="timeStamp" value="2" />
+        </breakpoint>
+        <breakpoint enabled="true" type="DotNet_Exception_Breakpoints">
+          <properties exception="System.Threading.ThreadAbortException" breakIfHandledByOtherCode="false" displayValue="System.Threading.ThreadAbortException" />
+          <option name="timeStamp" value="3" />
+        </breakpoint>
+      </breakpoints>
+    </breakpoint-manager>
+  </component>
+</project>
