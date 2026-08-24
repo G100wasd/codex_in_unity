@@ -1,0 +1,12 @@
+{
+  "name": "com.g100wasd.codex-unity",
+  "version": "0.1.0",
+  "displayName": "Codex for Unity (2022 Compatible)",
+  "description": "Native Codex, custom OpenAI-compatible API, and Unity MCP integration for the Unity Editor. Unity 2022.3 compatibility edition.",
+  "unity": "2022.3",
+  "dependencies": {
+    "com.unity.nuget.newtonsoft-json": "3.2.2"
+  },
+  "keywords": ["codex", "openai", "mcp", "unity-editor", "ai"],
+  "author": { "name": "G100wasd" }
+}

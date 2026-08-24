@@ -1,0 +1,17 @@
+{
+  "name": "com.g100wasd.codex-unity",
+  "version": "0.1.0",
+  "displayName": "Codex for Unity",
+  "description": "Native Codex, custom OpenAI-compatible API, and Unity MCP integration for the Unity Editor.",
+  "unity": "6000.0",
+  "keywords": [
+    "codex",
+    "openai",
+    "mcp",
+    "unity-editor",
+    "ai"
+  ],
+  "author": {
+    "name": "G100wasd"
+  }
+}
