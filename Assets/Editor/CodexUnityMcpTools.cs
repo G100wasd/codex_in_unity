@@ -20,6 +20,8 @@ internal static class CodexUnityMcpTools
     internal sealed class ToolCategory { public readonly string Name; public readonly string Description; public readonly string[] Tools; public ToolCategory(string name, string description, params string[] tools) { Name = name; Description = description; Tools = tools; } }
     internal readonly struct ToolOutput { public readonly string Text; public readonly bool IsError; public ToolOutput(string text, bool isError = false) { Text = text; IsError = isError; } }
     private static readonly List<string> RecentLogs = new List<string>();
+    private static readonly object ToolAvailabilityLock = new object();
+    private static HashSet<string> enabledToolNames;
     private static TestRunnerApi testRunnerApi;
     private static string testRunId, testRunStatus = "No test run has been started.", testRunSummary;
     internal static readonly string[] ToolNames = { "unity_get_bridge_status", "unity_get_interrupted_operations", "unity_get_editor_state", "unity_get_open_scenes", "unity_get_scene_view_state", "unity_capture_scene_view", "unity_get_hierarchy", "unity_find_game_objects", "unity_get_game_object_details", "unity_get_selection", "unity_set_selection", "unity_frame_selection", "unity_get_component_properties", "unity_get_component_values", "unity_create_game_object", "unity_create_primitive", "unity_delete_game_object", "unity_duplicate_game_object", "unity_add_component", "unity_remove_component", "unity_set_transform", "unity_set_game_object_metadata", "unity_set_serialized_property", "unity_get_recent_logs", "unity_get_console_summary", "unity_clear_console", "unity_get_project_info", "unity_get_project_settings", "unity_set_project_identity", "unity_get_tag_layer_settings", "unity_find_asset", "unity_get_asset_details", "unity_get_asset_importer_settings", "unity_set_texture_importer_settings", "unity_get_asset_dependencies", "unity_get_prefab_details", "unity_get_prefab_overrides", "unity_apply_prefab_instance", "unity_revert_prefab_instance", "unity_unpack_prefab_instance", "unity_open_asset", "unity_create_scene", "unity_open_scene", "unity_close_scene", "unity_set_active_scene", "unity_save_active_scene", "unity_save_all_scenes", "unity_create_prefab", "unity_instantiate_prefab", "unity_create_ui_canvas", "unity_create_ui_element", "unity_set_rect_transform", "unity_set_ui_text", "unity_create_folder", "unity_move_asset", "unity_rename_asset", "unity_delete_asset", "unity_duplicate_asset", "unity_create_material", "unity_create_script", "unity_write_scripts_batch", "unity_set_asset_labels", "unity_reimport_asset", "unity_refresh_asset_database", "unity_save_assets", "unity_get_build_settings", "unity_add_scene_to_build_settings", "unity_switch_build_target", "unity_build_player", "unity_get_define_symbols", "unity_set_define_symbols", "unity_get_installed_packages", "unity_find_missing_scripts", "unity_find_unreferenced_assets", "unity_get_compiler_errors", "unity_validate_scene", "unity_get_compilation_status", "unity_run_tests", "unity_get_test_run_status", "unity_undo", "unity_redo", "unity_set_play_mode", "unity_execute_menu_item" };
@@ -121,6 +123,49 @@ internal static class CodexUnityMcpTools
     static CodexUnityMcpTools()
     {
         Application.logMessageReceivedThreaded += CaptureLog;
+    }
+
+    private static string ToolAvailabilityPreferenceKey => "CodexUnity.EnabledMcpTools." + Application.dataPath.Replace(':', '_').Replace('\\', '_').Replace('/', '_');
+    private static HashSet<string> EnabledToolNames
+    {
+        get
+        {
+            lock (ToolAvailabilityLock)
+            {
+                if (enabledToolNames != null) return enabledToolNames;
+                if (!EditorPrefs.HasKey(ToolAvailabilityPreferenceKey)) return enabledToolNames = new HashSet<string>(ToolNames.Where(name => !RequiresApiApproval(name)), StringComparer.Ordinal);
+                return enabledToolNames = new HashSet<string>((EditorPrefs.GetString(ToolAvailabilityPreferenceKey, string.Empty) ?? string.Empty).Split(new[] { '|' }, StringSplitOptions.RemoveEmptyEntries), StringComparer.Ordinal);
+            }
+        }
+    }
+    internal static bool IsToolEnabled(string name) { lock (ToolAvailabilityLock) return EnabledToolNames.Contains(name); }
+    internal static string[] GetEnabledToolNames() { lock (ToolAvailabilityLock) return EnabledToolNames.OrderBy(name => name).ToArray(); }
+    internal static string[] GetDefaultEnabledToolNames() => ToolNames.Where(name => !RequiresApiApproval(name)).OrderBy(name => name).ToArray();
+    internal static void SaveEnabledToolNames(IEnumerable<string> names)
+    {
+        lock (ToolAvailabilityLock)
+        {
+            enabledToolNames = new HashSet<string>((names ?? Array.Empty<string>()).Where(name => ToolNames.Contains(name)), StringComparer.Ordinal);
+            EditorPrefs.SetString(ToolAvailabilityPreferenceKey, string.Join("|", enabledToolNames.OrderBy(name => name)));
+        }
+    }
+    internal static bool IsRiskyTool(string name) => RequiresApiApproval(name);
+    internal static string GetToolRiskDescription(string name)
+    {
+        if (name == "unity_delete_game_object" || name == "unity_delete_asset") return "风险：可能删除项目或场景内容。";
+        if (name == "unity_build_player" || name == "unity_switch_build_target") return "风险：可能耗时较长，并触发重新导入或编译。";
+        if (name == "unity_create_script" || name == "unity_write_scripts_batch" || name == "unity_set_define_symbols") return "风险：可能触发脚本编译与 Domain Reload。";
+        return "风险：会修改 Unity 项目或编辑器状态。";
+    }
+    internal static string GetEnabledToolDefinitionsJson()
+    {
+        using (var document = JsonDocument.Parse(ToolDefinitionsJson))
+        {
+            var definitions = document.RootElement.EnumerateArray()
+                .Where(item => item.TryGetProperty("name", out var name) && IsToolEnabled(name.GetString() ?? string.Empty))
+                .Select(item => item.GetRawText());
+            return "[" + string.Join(",", definitions) + "]";
+        }
     }
 
     internal static async Task<ToolOutput> InvokeAsync(string name, JsonElement arguments)

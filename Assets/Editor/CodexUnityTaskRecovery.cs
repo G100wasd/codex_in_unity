@@ -74,7 +74,7 @@ internal static class CodexUnityTaskRecovery
         {
             Debug.Log("[Codex Unity] Starting automatic task recovery for thread " + task.ThreadId + ".");
             var response = new StringBuilder();
-            await CodexAppServerClient.SendMessageAsync(task.Cwd, task.ThreadId, recoveryPrompt, task.Model, task.Effort,
+            await CodexAppServerClient.SendMessageAsync(task.Cwd, task.ThreadId, recoveryPrompt, task.Model, task.Effort, CodexApprovalPreferences.GlobalPromptEnabled ? CodexApprovalPreferences.GlobalPrompt : null,
                 delta => response.Append(delta),
                 request => request.Respond?.Invoke("decline"),
                 request => _ = ResolveMcpElicitationAsync(request),

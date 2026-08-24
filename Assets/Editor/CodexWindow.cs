@@ -15,9 +15,17 @@ public sealed partial class CodexWindow : EditorWindow
         rootVisualElement.style.flexDirection = FlexDirection.Row;
         rootVisualElement.style.flexGrow = 1;
         rootVisualElement.style.backgroundColor = new Color(.12f, .12f, .12f);
+
+        if (!CodexApprovalPreferences.HasCompletedLoginSetup)
+        {
+            CreateLoginScreen();
+            return;
+        }
+
         rootVisualElement.Add(CreateSidebar());
         rootVisualElement.Add(CreateVerticalDivider());
         rootVisualElement.Add(CreateMainPanel());
+        RefreshMcpPanelContent();
         needsConversationRestore = true;
         RefreshWorkspaceUi();
         CodexUnityMcpBridge.EnsureStarted();

@@ -155,7 +155,7 @@ public sealed partial class CodexWindow
     }
     private static VisualElement CreateApprovalCard(CodexApprovalRequest request)
     {
-        var card = new VisualElement { style = { marginTop = 8, marginBottom = 8, paddingLeft = 10, paddingRight = 10, paddingTop = 8, paddingBottom = 8, backgroundColor = new Color(.20f, .18f, .10f) } };
+        var card = new VisualElement { style = { marginTop = 8, marginBottom = 8, paddingLeft = 10, paddingRight = 10, paddingTop = 8, paddingBottom = 8, backgroundColor = new Color(.14f, .28f, .18f) } };
         card.Add(new Label(request.Title) { style = { unityFontStyleAndWeight = FontStyle.Bold } });
         card.Add(new Label(request.Reason) { style = { whiteSpace = WhiteSpace.Normal, marginTop = 4 } });
         if (!string.IsNullOrEmpty(request.GrantRoot)) card.Add(new Label("范围：" + request.GrantRoot) { style = { opacity = .75f } });

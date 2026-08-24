@@ -13,6 +13,24 @@ using UnityEngine;
 [Serializable] public sealed class CodexAccountInfo { public bool IsLoggedIn; public string Email; public string PlanType; }
 [Serializable] public sealed class CodexWorkspaceSnapshot { public CodexAccountInfo Account = new CodexAccountInfo(); public List<CodexThreadSummary> Threads = new List<CodexThreadSummary>(); public List<CodexModelOption> Models = new List<CodexModelOption>(); public string Error; }
 
+/// Project-local persisted choices for the three explicit "always allow" options.
+/// They never contain credentials and default to false.
+internal static class CodexApprovalPreferences
+{
+    private static string Prefix => "CodexUnity.Approvals." + Application.dataPath.Replace(':', '_').Replace('\\', '_').Replace('/', '_') + ".";
+    internal static bool AlwaysAllowFileChanges { get => EditorPrefs.GetBool(Prefix + "Files", false); set => EditorPrefs.SetBool(Prefix + "Files", value); }
+    internal static bool AlwaysAllowMcpCalls { get => EditorPrefs.GetBool(Prefix + "Mcp", false); set => EditorPrefs.SetBool(Prefix + "Mcp", value); }
+    internal static bool AlwaysAllowApiOperations { get => EditorPrefs.GetBool(Prefix + "Api", false); set => EditorPrefs.SetBool(Prefix + "Api", value); }
+    internal static bool GlobalPromptEnabled { get => EditorPrefs.GetBool(Prefix + "GlobalPromptEnabled", false); set => EditorPrefs.SetBool(Prefix + "GlobalPromptEnabled", value); }
+    internal static string GlobalPrompt { get => EditorPrefs.GetString(Prefix + "GlobalPrompt", string.Empty); set => EditorPrefs.SetString(Prefix + "GlobalPrompt", value ?? string.Empty); }
+    internal static string CustomApiModelName { get => EditorPrefs.GetString(Prefix + "CustomApiModelName", string.Empty); set => EditorPrefs.SetString(Prefix + "CustomApiModelName", value ?? string.Empty); }
+    internal static string CustomApiModelUrl { get => EditorPrefs.GetString(Prefix + "CustomApiModelUrl", string.Empty); set => EditorPrefs.SetString(Prefix + "CustomApiModelUrl", value ?? string.Empty); }
+    internal static string CustomApiKey { get => SessionState.GetString(Prefix + "CustomApiKey", string.Empty); set => SessionState.SetString(Prefix + "CustomApiKey", value ?? string.Empty); }
+    // This only records that the project has passed this plugin's welcome screen.
+    // It never represents, reads, or modifies the user's Codex account session.
+    internal static bool HasCompletedLoginSetup { get => EditorPrefs.GetBool(Prefix + "HasCompletedLoginSetup", false); set => EditorPrefs.SetBool(Prefix + "HasCompletedLoginSetup", value); }
+}
+
 /// In-memory data only; credentials and tokens are never stored here.
 public sealed class CodexWorkspaceStore
 {

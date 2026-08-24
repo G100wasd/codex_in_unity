@@ -102,11 +102,12 @@ internal sealed class CodexUnityMcpHttpServer
             case "initialize":
                 return "{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{\"tools\":{}},\"serverInfo\":{\"name\":\"unity-editor-bridge\",\"version\":\"0.1.0\"}}";
             case "notifications/initialized": return "{}";
-            case "tools/list": return "{\"tools\":" + CodexUnityMcpTools.ToolDefinitionsJson + "}";
+            case "tools/list": return "{\"tools\":" + CodexUnityMcpTools.GetEnabledToolDefinitionsJson() + "}";
             case "tools/call":
                 var name = parameters.TryGetProperty("name", out var nameElement) ? nameElement.GetString() : string.Empty;
                 var arguments = parameters.TryGetProperty("arguments", out var argumentsElement) ? argumentsElement.Clone() : default;
                 UnityEngine.Debug.Log("[Codex Unity MCP] Tool started: " + name + ".");
+                if (!CodexUnityMcpTools.IsToolEnabled(name)) return "{\"content\":[{\"type\":\"text\",\"text\":\"This Unity MCP tool is disabled in the plugin settings: " + Escape(name) + ".\"}],\"isError\":true}";
                 if ((UnityEditor.EditorApplication.isCompiling || UnityEditor.EditorApplication.isUpdating) && name != "unity_get_bridge_status" && name != "unity_get_interrupted_operations" && name != "unity_get_compilation_status")
                     return "{\"content\":[{\"type\":\"text\",\"text\":\"Unity is compiling or updating assets. The requested operation was not started; wait for unity_get_bridge_status to report Ready for write tools: True.\"}],\"isError\":true}";
                 var operationId = CodexUnityMcpTools.RequiresApiApproval(name) ? CodexUnityOperationJournal.Begin(name, arguments.ValueKind == JsonValueKind.Undefined ? "{}" : arguments.GetRawText()) : null;

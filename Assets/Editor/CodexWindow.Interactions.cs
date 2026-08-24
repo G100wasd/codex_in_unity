@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using UnityEditor;
 using UnityEngine;
@@ -163,7 +165,7 @@ public sealed partial class CodexWindow
             ScrollConversationToLatest();
             var hasReply = false;
             await CodexAppServerClient.SendMessageAsync(
-                GetProjectRoot(), selectedThreadId, text, selectedModelId, selectedEffort,
+                GetProjectRoot(), selectedThreadId, text, selectedModelId, selectedEffort, CodexApprovalPreferences.GlobalPromptEnabled ? CodexApprovalPreferences.GlobalPrompt : null,
                 delta =>
                 {
                     if (!hasReply) { assistantText.text = string.Empty; hasReply = true; }
@@ -172,12 +174,24 @@ public sealed partial class CodexWindow
                 },
                 request =>
                 {
+                    if (CodexApprovalPreferences.AlwaysAllowFileChanges)
+                    {
+                        request.Respond?.Invoke("acceptForSession");
+                        Debug.Log("[Codex Unity] Automatically approved file modification request.");
+                        return;
+                    }
                     var approvalCard = CreateApprovalCard(request);
                     conversation.Add(approvalCard);
                     ScrollConversationToLatest();
                 },
                 request =>
                 {
+                    if (CodexApprovalPreferences.AlwaysAllowMcpCalls)
+                    {
+                        request.Respond?.Invoke("accept");
+                        Debug.Log("[Codex Unity] Automatically approved MCP elicitation request.");
+                        return;
+                    }
                     var elicitationCard = CreateMcpElicitationCard(request);
                     conversation.Add(elicitationCard);
                     ScrollConversationToLatest();
@@ -262,6 +276,12 @@ public sealed partial class CodexWindow
         var completion = new TaskCompletionSource<bool>();
         await CodexUnityEditorDispatcher.RunAsync(() =>
         {
+            if (CodexApprovalPreferences.AlwaysAllowApiOperations)
+            {
+                completion.TrySetResult(true);
+                Debug.Log("[Codex Unity] Automatically approved Unity API operation: " + toolName + ".");
+                return 0;
+            }
             if (activeWindow == null || activeWindow.conversation == null)
             {
                 completion.TrySetResult(false);
@@ -280,6 +300,12 @@ public sealed partial class CodexWindow
         var completion = new TaskCompletionSource<string>();
         await CodexUnityEditorDispatcher.RunAsync(() =>
         {
+            if (CodexApprovalPreferences.AlwaysAllowMcpCalls)
+            {
+                completion.TrySetResult("accept");
+                Debug.Log("[Codex Unity] Automatically approved MCP elicitation request.");
+                return 0;
+            }
             if (activeWindow == null || activeWindow.conversation == null)
             {
                 completion.TrySetResult("cancel");
@@ -348,15 +374,21 @@ public sealed partial class CodexWindow
         mcpPanel.style.display = show ? DisplayStyle.Flex : DisplayStyle.None;
         if (!show) { mcpCategoryPanel.style.display = DisplayStyle.None; return; }
         accountPanel.style.display = DisplayStyle.None;
+        RefreshMcpPanelContent();
+    }
+    private void RefreshMcpPanelContent()
+    {
+        var enabledCategories = CodexUnityMcpTools.ToolCategories.Where(category => category.Tools.Any(CodexUnityMcpTools.IsToolEnabled)).ToArray();
         mcpLabel.text = "Unity MCP\n状态：" + (CodexUnityMcpBridge.IsRunning ? "已连接" : "未连接")
             + "\n端口：" + (CodexUnityMcpBridge.IsRunning ? CodexUnityMcpBridge.Endpoint : "—")
-            + "\n可用 API：" + CodexUnityMcpTools.ToolNames.Length + " 个\n分类：" + CodexUnityMcpTools.ToolCategories.Length + " 个";
+            + "\n可用 API：" + CodexUnityMcpTools.GetEnabledToolNames().Length + " 个\n分类：" + enabledCategories.Length + " 个";
         mcpCategoryPanel.style.display = DisplayStyle.None;
         mcpCategories.Clear();
-        foreach (var category in CodexUnityMcpTools.ToolCategories)
+        foreach (var category in enabledCategories)
         {
             var item = category;
-            mcpCategories.Add(new Button(() => ShowMcpCategory(item)) { text = item.Name + "（" + item.Tools.Length + "）", tooltip = item.Description, style = { marginTop = 3 } });
+            var count = item.Tools.Count(CodexUnityMcpTools.IsToolEnabled);
+            mcpCategories.Add(new Button(() => ShowMcpCategory(item)) { text = item.Name + "（" + count + "）", tooltip = item.Description, style = { marginTop = 3 } });
         }
     }
     private void ShowSettingsPage()
@@ -366,7 +398,211 @@ public sealed partial class CodexWindow
         mcpPanel.style.display = DisplayStyle.None;
         mcpCategoryPanel.style.display = DisplayStyle.None;
         mainPanel.Clear();
+        var settings = new VisualElement
+        {
+            style =
+            {
+                minWidth = 360, flexGrow = 1,
+                backgroundColor = new Color(.13f, .13f, .13f), paddingLeft = 12, paddingRight = 12, paddingTop = 12, paddingBottom = 12,
+                borderTopWidth = 1, borderBottomWidth = 1, borderLeftWidth = 1, borderRightWidth = 1,
+                borderTopColor = new Color(.25f, .25f, .25f), borderBottomColor = new Color(.25f, .25f, .25f), borderLeftColor = new Color(.25f, .25f, .25f), borderRightColor = new Color(.25f, .25f, .25f)
+            }
+        };
+        settings.Add(new Label("设置") { style = { unityFontStyleAndWeight = FontStyle.Bold, fontSize = 16, marginBottom = 10 } });
+        var approvals = new VisualElement
+        {
+            style = { backgroundColor = new Color(.16f, .16f, .16f), paddingLeft = 10, paddingRight = 10, paddingTop = 9, paddingBottom = 10 }
+        };
+        approvals.Add(new Label("审核策略") { style = { unityFontStyleAndWeight = FontStyle.Bold, marginBottom = 2 } });
+        approvals.Add(new Label("开启后，对应类型的请求将不再显示审核卡。") { style = { fontSize = 10, opacity = .7f } });
+        AddApprovalSetting(approvals, "始终允许文件修改", "自动批准淡绿色的文件修改审核卡。", CodexApprovalPreferences.AlwaysAllowFileChanges, value => CodexApprovalPreferences.AlwaysAllowFileChanges = value);
+        AddApprovalSetting(approvals, "始终允许 MCP 调用", "自动批准蓝色的 MCP 调用审核卡。", CodexApprovalPreferences.AlwaysAllowMcpCalls, value => CodexApprovalPreferences.AlwaysAllowMcpCalls = value);
+        AddApprovalSetting(approvals, "始终允许 API 操作", "自动批准棕色的 Unity API 操作审核卡。", CodexApprovalPreferences.AlwaysAllowApiOperations, value => CodexApprovalPreferences.AlwaysAllowApiOperations = value);
+        settings.Add(approvals);
+        AddGlobalPromptSettings(settings);
+        AddMcpToolSettings(settings);
+        AddCustomApiSettings(settings);
+        AddLoginSettings(settings);
+        var settingsScroll = new ScrollView { style = { flexGrow = 1 } };
+        settingsScroll.Add(settings);
+        mainPanel.Add(settingsScroll);
         isShowingSettingsPage = true;
+    }
+    private static void AddApprovalSetting(VisualElement parent, string label, string help, bool currentValue, System.Action<bool> save)
+    {
+        var toggle = new Toggle(label) { value = currentValue, tooltip = help, style = { marginTop = 8 } };
+        toggle.RegisterValueChangedCallback(evt => save(evt.newValue));
+        parent.Add(toggle);
+        parent.Add(new Label(help) { style = { marginLeft = 22, fontSize = 10, opacity = .7f } });
+    }
+    private void AddGlobalPromptSettings(VisualElement parent)
+    {
+        var promptCard = new VisualElement { style = { backgroundColor = new Color(.16f, .16f, .16f), paddingLeft = 10, paddingRight = 10, paddingTop = 9, paddingBottom = 10, marginTop = 10 } };
+        promptCard.Add(new Label("全局提示词") { style = { unityFontStyleAndWeight = FontStyle.Bold } });
+        promptCard.Add(new Label("作为开发者指令附加到当前项目的后续 Codex 回合，不会显示为聊天消息。") { style = { fontSize = 10, opacity = .7f, marginTop = 2 } });
+        var enabled = new Toggle("启用全局提示词") { value = CodexApprovalPreferences.GlobalPromptEnabled, style = { marginTop = 7 } };
+        var prompt = new TextField { multiline = true, isDelayed = false, verticalScrollerVisibility = ScrollerVisibility.Auto, value = CodexApprovalPreferences.GlobalPrompt };
+        prompt.style.height = 118; prompt.style.minHeight = 118; prompt.style.maxHeight = 118; prompt.style.whiteSpace = WhiteSpace.Normal; prompt.style.marginTop = 5;
+        promptCard.Add(enabled); promptCard.Add(prompt);
+        promptCard.Add(new Button(() =>
+        {
+            CodexApprovalPreferences.GlobalPromptEnabled = enabled.value;
+            CodexApprovalPreferences.GlobalPrompt = prompt.value?.Trim() ?? string.Empty;
+            CodexAppServerClient.InvalidateThreadInstructions(selectedThreadId);
+            Debug.Log("[Codex Unity] Saved global prompt settings; they apply on the next sent turn.");
+        }) { text = "保存全局提示词", style = { marginTop = 8 } });
+        parent.Add(promptCard);
+    }
+    private void AddMcpToolSettings(VisualElement parent)
+    {
+        var selected = new HashSet<string>(CodexUnityMcpTools.GetEnabledToolNames(), StringComparer.Ordinal);
+        var toolsCard = new VisualElement { style = { backgroundColor = new Color(.16f, .16f, .16f), paddingLeft = 10, paddingRight = 10, paddingTop = 9, paddingBottom = 10, marginTop = 10 } };
+        toolsCard.Add(new Label("MCP 工具可用性") { style = { unityFontStyleAndWeight = FontStyle.Bold } });
+        toolsCard.Add(new Label("默认只启用低风险工具。保存后工具列表立即按选择更新。") { style = { fontSize = 10, opacity = .7f, marginTop = 2 } });
+        var toolToggles = new Dictionary<string, Toggle>();
+        var categoryToggles = new List<KeyValuePair<string[], Toggle>>();
+        var selectAll = new Toggle("选择全部 API") { value = selected.Count == CodexUnityMcpTools.ToolNames.Length, style = { marginTop = 7 } };
+        toolsCard.Add(selectAll);
+        foreach (var category in CodexUnityMcpTools.ToolCategories)
+        {
+            var categoryTools = category.Tools;
+            var categoryRow = new VisualElement { style = { flexDirection = FlexDirection.Row, alignItems = Align.Center, marginTop = 3 } };
+            var foldout = new Foldout { text = category.Name + "（" + categoryTools.Length + "）", value = false, tooltip = category.Description };
+            foldout.style.flexGrow = 1;
+            var selectCategory = new Toggle { value = categoryTools.All(selected.Contains), tooltip = "启用或关闭此分类的全部 API", style = { marginRight = 7 } };
+            categoryToggles.Add(new KeyValuePair<string[], Toggle>(categoryTools, selectCategory));
+            foreach (var tool in categoryTools)
+            {
+                var name = tool;
+                var toggle = new Toggle(name) { value = selected.Contains(name), style = { marginLeft = 18 } };
+                toggle.RegisterValueChangedCallback(evt =>
+                {
+                    if (evt.newValue) selected.Add(name); else selected.Remove(name);
+                    selectCategory.SetValueWithoutNotify(categoryTools.All(selected.Contains));
+                    selectAll.SetValueWithoutNotify(selected.Count == CodexUnityMcpTools.ToolNames.Length);
+                });
+                toolToggles.Add(name, toggle); foldout.Add(toggle);
+                if (CodexUnityMcpTools.IsRiskyTool(name)) foldout.Add(new Label(CodexUnityMcpTools.GetToolRiskDescription(name)) { style = { marginLeft = 40, fontSize = 10, color = new Color(.95f, .72f, .22f) } });
+            }
+            selectCategory.RegisterValueChangedCallback(evt =>
+            {
+                foreach (var tool in categoryTools) { if (evt.newValue) selected.Add(tool); else selected.Remove(tool); toolToggles[tool].SetValueWithoutNotify(evt.newValue); }
+                selectAll.SetValueWithoutNotify(selected.Count == CodexUnityMcpTools.ToolNames.Length);
+            });
+            categoryRow.Add(foldout); categoryRow.Add(selectCategory); toolsCard.Add(categoryRow);
+        }
+        selectAll.RegisterValueChangedCallback(evt =>
+        {
+            selected.Clear(); if (evt.newValue) foreach (var tool in CodexUnityMcpTools.ToolNames) selected.Add(tool);
+            foreach (var pair in toolToggles) pair.Value.SetValueWithoutNotify(evt.newValue);
+            foreach (var pair in categoryToggles) pair.Value.SetValueWithoutNotify(evt.newValue);
+        });
+        var actions = new VisualElement { style = { flexDirection = FlexDirection.Row, marginTop = 8 } };
+        actions.Add(new Button(() =>
+        {
+            selected.Clear(); foreach (var tool in CodexUnityMcpTools.GetDefaultEnabledToolNames()) selected.Add(tool);
+            foreach (var pair in toolToggles) pair.Value.SetValueWithoutNotify(selected.Contains(pair.Key));
+            foreach (var pair in categoryToggles) pair.Value.SetValueWithoutNotify(pair.Key.All(selected.Contains));
+            selectAll.SetValueWithoutNotify(selected.Count == CodexUnityMcpTools.ToolNames.Length);
+            CodexUnityMcpTools.SaveEnabledToolNames(selected);
+            RefreshMcpPanelContent();
+            Debug.Log("[Codex Unity] Reset MCP tool availability to the default low-risk set.");
+        }) { text = "重置为默认" });
+        actions.Add(new Button(() => { CodexUnityMcpTools.SaveEnabledToolNames(selected); RefreshMcpPanelContent(); Debug.Log("[Codex Unity] Saved " + selected.Count + " enabled MCP tool(s)."); }) { text = "保存 API 可用性", style = { marginLeft = 6 } });
+        toolsCard.Add(actions);
+        parent.Add(toolsCard);
+    }
+    private void AddCustomApiSettings(VisualElement parent)
+    {
+        var officialLoginActive = CodexWorkspaceStore.Instance.Snapshot.Account.IsLoggedIn;
+        var apiCard = new VisualElement { style = { backgroundColor = new Color(.16f, .16f, .16f), paddingLeft = 10, paddingRight = 10, paddingTop = 9, paddingBottom = 10, marginTop = 10, opacity = officialLoginActive ? .45f : 1f } };
+        apiCard.Add(new Label("自定义 API / 模型") { style = { unityFontStyleAndWeight = FontStyle.Bold } });
+        apiCard.Add(new Label(officialLoginActive ? "当前正在复用 Codex 官方登录，已禁用自定义 API 设置。" : "为后续自定义模型提供商扩展预留；尚不会替代当前官方 Codex 登录。") { style = { fontSize = 10, opacity = .7f, marginTop = 2 } });
+        var key = new TextField("API Key") { value = CodexApprovalPreferences.CustomApiKey, isPasswordField = true, style = { marginTop = 7 } };
+        var model = new TextField("模型名称") { value = CodexApprovalPreferences.CustomApiModelName, style = { marginTop = 5 } };
+        var url = new TextField("模型链接") { value = CodexApprovalPreferences.CustomApiModelUrl, style = { marginTop = 5 } };
+        apiCard.Add(key); apiCard.Add(model); apiCard.Add(url);
+        apiCard.Add(new Button(() =>
+        {
+            CodexApprovalPreferences.CustomApiKey = key.value;
+            CodexApprovalPreferences.CustomApiModelName = model.value?.Trim() ?? string.Empty;
+            CodexApprovalPreferences.CustomApiModelUrl = url.value?.Trim() ?? string.Empty;
+            Debug.Log("[Codex Unity] Saved custom model metadata for this editor session.");
+        }) { text = "保存自定义模型设置", style = { marginTop = 8 } });
+        apiCard.SetEnabled(!officialLoginActive);
+        parent.Add(apiCard);
+    }
+    private void AddLoginSettings(VisualElement parent)
+    {
+        var loginCard = new VisualElement
+        {
+            style = { backgroundColor = new Color(.16f, .16f, .16f), paddingLeft = 10, paddingRight = 10, paddingTop = 9, paddingBottom = 10, marginTop = 10 }
+        };
+        loginCard.Add(new Label("登录") { style = { unityFontStyleAndWeight = FontStyle.Bold } });
+        loginCard.Add(new Label("退出后将返回插件的登录选择页；不会退出本机 Codex 或清除官方账号登录状态。")
+        {
+            style = { fontSize = 10, opacity = .7f, marginTop = 2, whiteSpace = WhiteSpace.Normal }
+        });
+        loginCard.Add(new Button(ExitPluginLogin)
+        {
+            text = "退出登录",
+            tooltip = "退出此项目中的 Codex 插件会话选择",
+            style = { marginTop = 8, backgroundColor = new Color(.33f, .16f, .16f) }
+        });
+        parent.Add(loginCard);
+    }
+    private void CreateLoginScreen()
+    {
+        isShowingSettingsPage = false;
+        var host = new VisualElement
+        {
+            style = { flexGrow = 1, justifyContent = Justify.Center, alignItems = Align.Center, paddingLeft = 24, paddingRight = 24 }
+        };
+        var card = new VisualElement
+        {
+            style =
+            {
+                width = 380, maxWidth = 380, backgroundColor = new Color(.16f, .16f, .16f),
+                paddingLeft = 22, paddingRight = 22, paddingTop = 20, paddingBottom = 20,
+                borderTopWidth = 1, borderBottomWidth = 1, borderLeftWidth = 1, borderRightWidth = 1,
+                borderTopColor = new Color(.29f, .29f, .29f), borderBottomColor = new Color(.29f, .29f, .29f),
+                borderLeftColor = new Color(.29f, .29f, .29f), borderRightColor = new Color(.29f, .29f, .29f)
+            }
+        };
+        card.Add(new Label("欢迎使用 Codex for Unity") { style = { unityFontStyleAndWeight = FontStyle.Bold, fontSize = 18 } });
+        card.Add(new Label("此项目首次使用插件。选择一种登录方式后即可访问当前项目的 Codex 聊天池与 Unity MCP 工具。")
+        {
+            style = { whiteSpace = WhiteSpace.Normal, marginTop = 7, marginBottom = 12, opacity = .8f }
+        });
+        card.Add(new Button(UseLocalCodexLogin)
+        {
+            text = "使用本机 Codex 登录",
+            tooltip = "复用已安装 Codex 的官方登录状态",
+            style = { height = 32 }
+        });
+        var apiKeyLogin = new Button { text = "通过 API Key 登录", tooltip = "自定义 API 登录将在后续版本提供", style = { height = 32, marginTop = 7, opacity = .55f } };
+        apiKeyLogin.SetEnabled(false);
+        card.Add(apiKeyLogin);
+        card.Add(new Label("本机 Codex 登录会复用官方登录状态；插件不会读取或解析你的凭证文件。")
+        {
+            style = { fontSize = 10, opacity = .65f, whiteSpace = WhiteSpace.Normal, marginTop = 12 }
+        });
+        host.Add(card);
+        rootVisualElement.Add(host);
+    }
+    private void UseLocalCodexLogin()
+    {
+        CodexApprovalPreferences.HasCompletedLoginSetup = true;
+        Debug.Log("[Codex Unity] Local Codex login selected; checking the official Codex session.");
+        CreateGUI();
+    }
+    private void ExitPluginLogin()
+    {
+        CodexApprovalPreferences.HasCompletedLoginSetup = false;
+        selectedThreadId = null;
+        needsConversationRestore = false;
+        Debug.Log("[Codex Unity] Returned to the plugin login screen. The local Codex account remains signed in.");
+        CreateGUI();
     }
     private void RestoreChatPageIfNeeded()
     {
@@ -380,7 +616,8 @@ public sealed partial class CodexWindow
     }
     private void ShowMcpCategory(CodexUnityMcpTools.ToolCategory category)
     {
-        mcpCategoryLabel.text = category.Name + "\n" + category.Description + "\n\nAPI（" + category.Tools.Length + "）\n• " + string.Join("\n• ", category.Tools);
+        var enabledTools = category.Tools.Where(CodexUnityMcpTools.IsToolEnabled).ToArray();
+        mcpCategoryLabel.text = category.Name + "\n" + category.Description + "\n\nAPI（" + enabledTools.Length + "）\n• " + string.Join("\n• ", enabledTools);
         mcpCategoryPanel.style.display = DisplayStyle.Flex;
     }
     private static string GetProjectName() => Path.GetFileName(GetProjectRoot());

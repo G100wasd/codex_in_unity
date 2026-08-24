@@ -21,7 +21,7 @@ public static class CodexAppServerClient
     private static string sharedMcpEndpoint;
     private static readonly HashSet<string> ResumedThreadIds = new HashSet<string>();
 
-    public static async Task SendMessageAsync(string cwd, string threadId, string text, string model, string effort, Action<string> onAssistantDelta, Action<CodexApprovalRequest> onApprovalRequested, Action<CodexMcpElicitationRequest> onMcpElicitationRequested, Action<List<CodexFileChange>> onFileChanges)
+    public static async Task SendMessageAsync(string cwd, string threadId, string text, string model, string effort, string developerInstructions, Action<string> onAssistantDelta, Action<CodexApprovalRequest> onApprovalRequested, Action<CodexMcpElicitationRequest> onMcpElicitationRequested, Action<List<CodexFileChange>> onFileChanges)
     {
         await RequestGate.WaitAsync();
         try
@@ -31,7 +31,8 @@ public static class CodexAppServerClient
             // Do not repeat this for every message, because repeated resumes can keep a writer attached.
             if (!ResumedThreadIds.Contains(threadId))
             {
-                await CallAsync(process, 2, "thread/resume", "{\"threadId\":\"" + Escape(threadId) + "\",\"cwd\":\"" + Escape(cwd) + "\"}");
+                var instructions = string.IsNullOrWhiteSpace(developerInstructions) ? "null" : "\"" + Escape(developerInstructions) + "\"";
+                await CallAsync(process, 2, "thread/resume", "{\"threadId\":\"" + Escape(threadId) + "\",\"cwd\":\"" + Escape(cwd) + "\",\"developerInstructions\":" + instructions + "}");
                 ResumedThreadIds.Add(threadId);
             }
             var settings = string.IsNullOrEmpty(model) ? string.Empty : ",\"model\":\"" + Escape(model) + "\"";
@@ -41,6 +42,10 @@ public static class CodexAppServerClient
             await ReadAssistantReplyAsync(process, threadId, turnId, onAssistantDelta, onApprovalRequested, onMcpElicitationRequested, onFileChanges);
         }
         finally { RequestGate.Release(); }
+    }
+    public static void InvalidateThreadInstructions(string threadId)
+    {
+        if (!string.IsNullOrEmpty(threadId)) ResumedThreadIds.Remove(threadId);
     }
     public static async Task<CodexThreadSummary> CreateThreadAsync(string cwd)
     {
