@@ -32,16 +32,13 @@ public sealed partial class CodexWindow
         if (isRefreshing) return; isRefreshing = true;
         try
         {
-            if (CodexApprovalPreferences.UsesApiKeyLogin)
+            var provider = CodexAgentProviderFactory.Current;
+            var fetched = await provider.FetchWorkspaceAsync(GetProjectRoot());
+            if (provider.UsesSharedCodexThreads)
             {
-                var apiSnapshot = new CodexWorkspaceSnapshot { Threads = CodexApiChatStore.GetSummaries() };
-                CodexWorkspaceStore.Instance.Set(apiSnapshot);
-                RestoreConversationWhenReady(apiSnapshot);
-                return;
+                fetched = CodexWorkspaceStore.Instance.MergeKnownThreads(fetched);
+                CodexUnityTaskRecovery.CancelIfThreadMissing(fetched);
             }
-            var fetched = await CodexAppServerClient.FetchAsync(GetProjectRoot());
-            fetched = CodexWorkspaceStore.Instance.MergeKnownThreads(fetched);
-            CodexUnityTaskRecovery.CancelIfThreadMissing(fetched);
             CodexWorkspaceStore.Instance.Set(fetched);
             Debug.Log("[Codex Unity] Chat pool refreshed: " + fetched.Threads.Count + " thread(s).");
             RestoreConversationWhenReady(fetched);
@@ -98,6 +95,14 @@ public sealed partial class CodexWindow
     }
     private async void SelectThread(CodexThreadSummary thread)
     {
+        if (!CodexApprovalPreferences.UsesApiKeyLogin && thread != null && !string.IsNullOrWhiteSpace(thread.Id) && thread.Id.StartsWith("api-", StringComparison.OrdinalIgnoreCase))
+        {
+            Debug.LogWarning("[Codex Unity] Ignored API-key local conversation while Codex login is active: " + thread.Id + ".");
+            selectedThreadId = null;
+            needsConversationRestore = false;
+            BeginWorkspaceRefresh();
+            return;
+        }
         RestoreChatPageIfNeeded();
         selectedThreadId = thread.Id;
         needsConversationRestore = false;
@@ -108,17 +113,7 @@ public sealed partial class CodexWindow
         RefreshWorkspaceUi();
         try
         {
-            if (CodexApprovalPreferences.UsesApiKeyLogin)
-            {
-                var apiMessages = CodexApiChatStore.Read(thread.Id);
-                if (selectedThreadId != thread.Id) return;
-                conversation.Clear();
-                foreach (var message in apiMessages) conversation.Add(CreateMessage(message.Role == "user" ? "你" : "assistant", message.Content));
-                ScrollConversationToLatest();
-                Debug.Log("[Codex Unity API] Loaded " + apiMessages.Count + " local API chat message(s) for " + thread.Id + ".");
-                return;
-            }
-            var messages = await CodexAppServerClient.ReadThreadAsync(GetProjectRoot(), thread.Id);
+            var messages = await CodexAgentProviderFactory.Current.ReadConversationAsync(GetProjectRoot(), thread.Id);
             if (selectedThreadId != thread.Id) return;
             conversation.Clear();
             foreach (var message in messages) conversation.Add(message.IsFileChange ? CreateFileChangeCard(message.FileChanges) : CreateMessage(message.Sender, message.Text));
@@ -139,16 +134,7 @@ public sealed partial class CodexWindow
         RefreshWorkspaceUi();
         try
         {
-            if (CodexApprovalPreferences.UsesApiKeyLogin)
-            {
-                var apiThread = CodexApiChatStore.Create();
-                var localSummary = new CodexThreadSummary { Id = apiThread.Id, Name = apiThread.Name };
-                isCreatingThread = false;
-                BeginWorkspaceRefresh();
-                SelectThread(localSummary);
-                return;
-            }
-            var thread = await CodexAppServerClient.CreateThreadAsync(GetProjectRoot());
+            var thread = await CodexAgentProviderFactory.Current.CreateConversationAsync(GetProjectRoot());
             var state = CodexWorkspaceStore.Instance.Snapshot;
             isCreatingThread = false;
             state.Threads.Insert(0, thread);
@@ -171,14 +157,7 @@ public sealed partial class CodexWindow
     {
         try
         {
-            if (CodexApprovalPreferences.UsesApiKeyLogin)
-            {
-                CodexApiChatStore.Rename(thread.Id, name);
-                if (selectedThreadId == thread.Id) activeThreadLabel.text = name.Trim();
-                BeginWorkspaceRefresh();
-                return;
-            }
-            await CodexAppServerClient.RenameThreadAsync(GetProjectRoot(), thread.Id, name);
+            await CodexAgentProviderFactory.Current.RenameConversationAsync(GetProjectRoot(), thread.Id, name);
             CodexWorkspaceStore.Instance.RenameThread(thread.Id, name.Trim());
             if (selectedThreadId == thread.Id) activeThreadLabel.text = name.Trim();
             Debug.Log("[Codex Unity] Renamed thread " + thread.Id + ".");
@@ -191,8 +170,8 @@ public sealed partial class CodexWindow
         if (!EditorUtility.DisplayDialog("删除聊天", "确定永久删除“" + thread.Name + "”吗？此操作不可恢复。", "删除", "取消")) return;
         try
         {
-            if (CodexApprovalPreferences.UsesApiKeyLogin) CodexApiChatStore.Delete(thread.Id);
-            else { await CodexAppServerClient.DeleteThreadAsync(GetProjectRoot(), thread.Id); CodexWorkspaceStore.Instance.RemoveThread(thread.Id); }
+            await CodexAgentProviderFactory.Current.DeleteConversationAsync(GetProjectRoot(), thread.Id);
+            CodexWorkspaceStore.Instance.RemoveThread(thread.Id);
             if (selectedThreadId == thread.Id) { selectedThreadId = null; conversation.Clear(); activeThreadLabel.text = "请选择或新建对话"; }
             Debug.Log("[Codex Unity] Deleted thread " + thread.Id + "."); BeginWorkspaceRefresh();
         }
@@ -210,22 +189,16 @@ public sealed partial class CodexWindow
             conversation.Add(CreateMessage("你", text));
             conversation.Add(CreateStreamingMessage("Codex", out var assistantText));
             ScrollConversationToLatest();
-            if (CodexApprovalPreferences.UsesApiKeyLogin)
-            {
-                await SendApiAgentMessageAsync(text, assistantText);
-                messageInput.value = string.Empty;
-                return;
-            }
             var hasReply = false;
-            await CodexAppServerClient.SendMessageAsync(
-                GetProjectRoot(), selectedThreadId, text, selectedModelId, selectedEffort, CodexApprovalPreferences.GlobalPromptEnabled ? CodexApprovalPreferences.GlobalPrompt : null,
-                delta =>
+            var callbacks = new AgentProviderCallbacks
+            {
+                OnAssistantDelta = delta =>
                 {
                     if (!hasReply) { assistantText.text = string.Empty; hasReply = true; }
                     assistantText.text += delta;
                     ScrollConversationToLatest();
                 },
-                request =>
+                OnFileApprovalRequested = request =>
                 {
                     if (CodexApprovalPreferences.AlwaysAllowFileChanges)
                     {
@@ -237,7 +210,7 @@ public sealed partial class CodexWindow
                     conversation.Add(approvalCard);
                     ScrollConversationToLatest();
                 },
-                request =>
+                OnMcpElicitationRequested = request =>
                 {
                     if (CodexApprovalPreferences.AlwaysAllowMcpCalls)
                     {
@@ -249,14 +222,22 @@ public sealed partial class CodexWindow
                     conversation.Add(elicitationCard);
                     ScrollConversationToLatest();
                 },
-                changes =>
+                OnFileChanges = changes =>
                 {
                     var fileChangeCard = CreateFileChangeCard(changes);
                     conversation.Add(fileChangeCard);
                     ScrollConversationToLatest();
-                });
+                },
+                ExecuteUnityToolAsync = ExecuteApiAgentToolAsync
+            };
+            await CodexAgentProviderFactory.Current.SendAsync(new AgentProviderRequest
+            {
+                ProjectRoot = GetProjectRoot(), ConversationId = selectedThreadId, Text = text,
+                Model = selectedModelId, Effort = selectedEffort,
+                DeveloperInstructions = CodexApprovalPreferences.GlobalPromptEnabled ? CodexApprovalPreferences.GlobalPrompt : null
+            }, callbacks);
             messageInput.value = string.Empty;
-            CodexUnityTaskRecovery.CompleteNormally();
+            if (!CodexApprovalPreferences.UsesApiKeyLogin) CodexUnityTaskRecovery.CompleteNormally();
             Debug.Log("[Codex Unity] Message and assistant reply completed for thread " + selectedThreadId + ".");
         }
         catch (Exception error)
@@ -267,41 +248,6 @@ public sealed partial class CodexWindow
             Debug.LogError("[Codex Unity] Send failed for thread " + selectedThreadId + ": " + error);
         }
         finally { RefreshWorkspaceUi(); }
-    }
-    private async Task SendApiAgentMessageAsync(string text, Label assistantText)
-    {
-        await CodexCustomApiClient.LogAvailableModelsAsync(CodexApprovalPreferences.CustomApiKey, CodexApprovalPreferences.CustomApiModelUrl);
-        var history = new List<CodexCustomApiClient.AgentMessage>();
-        foreach (var message in CodexApiChatStore.Read(selectedThreadId)) history.Add(new CodexCustomApiClient.AgentMessage { Role = message.Role, Content = message.Content });
-        history.Add(new CodexCustomApiClient.AgentMessage { Role = "user", Content = text });
-        CodexApiChatStore.Append(selectedThreadId, "user", text);
-        var visibleReply = string.Empty;
-        const int MaxToolRounds = 8;
-        for (var round = 0; round < MaxToolRounds; round++)
-        {
-            var reply = await CodexCustomApiClient.CreateAgentCompletionAsync(CodexApprovalPreferences.CustomApiKey, CodexApprovalPreferences.CustomApiModelName, CodexApprovalPreferences.CustomApiModelUrl, history);
-            if (!string.IsNullOrWhiteSpace(reply.Content))
-            {
-                visibleReply += (visibleReply.Length == 0 ? string.Empty : "\n") + reply.Content;
-                assistantText.text = visibleReply;
-                ScrollConversationToLatest();
-            }
-            history.Add(new CodexCustomApiClient.AgentMessage { Role = "assistant", Content = reply.Content, ToolCalls = reply.ToolCalls });
-            if (reply.ToolCalls == null || reply.ToolCalls.Count == 0)
-            {
-                if (string.IsNullOrWhiteSpace(visibleReply)) visibleReply = "任务已完成，但 API 未返回文本内容。";
-                assistantText.text = visibleReply;
-                CodexApiChatStore.Append(selectedThreadId, "assistant", visibleReply);
-                Debug.Log("[Codex Unity API Agent] Reply completed after " + (round + 1) + " round(s).");
-                return;
-            }
-            foreach (var call in reply.ToolCalls)
-            {
-                var output = await ExecuteApiAgentToolAsync(call);
-                history.Add(new CodexCustomApiClient.AgentMessage { Role = "tool", ToolCallId = call.Id, Content = output });
-            }
-        }
-        throw new InvalidOperationException("API Agent 在 " + MaxToolRounds + " 轮工具调用后仍未完成，已安全停止。");
     }
     private static async Task<string> ExecuteApiAgentToolAsync(CodexCustomApiClient.AgentToolCall call)
     {
@@ -751,6 +697,11 @@ public sealed partial class CodexWindow
     }
     private void UseLocalCodexLogin()
     {
+        // Do not render or auto-restore an API-key local conversation while the
+        // App Server provider is being loaded.
+        selectedThreadId = null;
+        needsConversationRestore = false;
+        CodexWorkspaceStore.Instance.Set(new CodexWorkspaceSnapshot());
         CodexApprovalPreferences.LoginMode = "local";
         CodexApprovalPreferences.HasCompletedLoginSetup = true;
         Debug.Log("[Codex Unity] Local Codex login selected; checking the official Codex session.");
@@ -853,6 +804,12 @@ public sealed partial class CodexWindow
     }
     private void CompleteApiKeyLogin()
     {
+        // The two providers own different conversation pools. Clearing the
+        // transient UI snapshot prevents an old Codex thread from being selected
+        // before the API-key local pool is refreshed.
+        selectedThreadId = null;
+        needsConversationRestore = false;
+        CodexWorkspaceStore.Instance.Set(new CodexWorkspaceSnapshot());
         CodexApprovalPreferences.LoginMode = "api";
         CodexApprovalPreferences.HasCompletedLoginSetup = true;
         Debug.Log("[Codex Unity] API Key login configuration selected. Custom API/model settings are enabled.");

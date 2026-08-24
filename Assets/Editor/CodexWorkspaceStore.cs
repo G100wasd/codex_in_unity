@@ -74,6 +74,9 @@ public sealed class CodexWorkspaceStore
         foreach (var known in Snapshot.Threads)
         {
             if (string.IsNullOrWhiteSpace(known.Id) || fetched.Threads.Exists(item => item.Id == known.Id)) continue;
+            // API-key conversations are intentionally local to the plugin. They
+            // use an "api-" identifier and are never valid App Server threads.
+            if (known.Id.StartsWith("api-", StringComparison.OrdinalIgnoreCase)) continue;
             // Some App Server builds do not return appServer-origin threads from
             // thread/list. Keep the project-local summary until an explicit
             // delete removes it, rather than erasing it on every refresh.
@@ -140,7 +143,10 @@ internal static class CodexApiChatStore
 /// </summary>
 internal static class CodexCustomApiClient
 {
+    // Connectivity probes should fail quickly, but a real model response may need
+    // substantially longer (especially when its prompt contains Unity tool schemas).
     private static readonly HttpClient Client = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+    private static readonly HttpClient AgentClient = new HttpClient { Timeout = TimeSpan.FromSeconds(120) };
 
     internal static async Task<string> ValidateAsync(string apiKey, string modelName, string modelUrl)
     {
@@ -314,27 +320,39 @@ internal static class CodexCustomApiClient
     internal sealed class AgentResponse { internal string Content; internal List<AgentToolCall> ToolCalls = new List<AgentToolCall>(); }
 
     /// <summary>Calls an OpenAI-compatible /chat/completions endpoint with the enabled Unity tools.</summary>
-    internal static async Task<AgentResponse> CreateAgentCompletionAsync(string apiKey, string modelName, string modelUrl, List<AgentMessage> messages)
+    internal static async Task<AgentResponse> CreateAgentCompletionAsync(string apiKey, string modelName, string modelUrl, List<AgentMessage> messages, string developerInstructions, bool requireToolCall)
     {
         if (string.IsNullOrWhiteSpace(apiKey) || string.IsNullOrWhiteSpace(modelName)) throw new InvalidOperationException("API Key 或模型名称为空。");
         if (!TryBuildApiBase(modelUrl, out var apiBase, out var reason)) throw new InvalidOperationException(reason);
         var endpoint = modelUrl.TrimEnd('/').EndsWith("/chat/completions", StringComparison.OrdinalIgnoreCase) ? new Uri(modelUrl) : new Uri(apiBase, "chat/completions");
-        var json = BuildAgentRequestJson(modelName, messages);
+        var json = BuildAgentRequestJson(modelName, messages, developerInstructions, requireToolCall);
         using (var request = new HttpRequestMessage(HttpMethod.Post, endpoint))
         {
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
             request.Content = new StringContent(json, Encoding.UTF8, "application/json");
-            using (var response = await Client.SendAsync(request))
+            Debug.Log("<color=#5DADE2>[Codex Unity API Agent]</color> 正在请求 <color=#F4D03F>" + modelName + "</color>（最长等待 120 秒）：" + endpoint);
+            try
             {
-                var body = await response.Content.ReadAsStringAsync();
-                Debug.Log("<color=#5DADE2>[Codex Unity API Agent]</color> POST " + endpoint + " <color=#F4D03F>HTTP " + (int)response.StatusCode + "</color>");
-                if (!response.IsSuccessStatusCode) throw new InvalidOperationException("第三方 API 返回 HTTP " + (int)response.StatusCode + "：" + body.Substring(0, Math.Min(body.Length, 1000)));
-                return ParseAgentResponse(body);
+                using (var response = await AgentClient.SendAsync(request))
+                {
+                    var body = await response.Content.ReadAsStringAsync();
+                    Debug.Log("<color=#5DADE2>[Codex Unity API Agent]</color> POST " + endpoint + " <color=#F4D03F>HTTP " + (int)response.StatusCode + "</color>");
+                    if (!response.IsSuccessStatusCode) throw new InvalidOperationException("第三方 API 返回 HTTP " + (int)response.StatusCode + "：" + body.Substring(0, Math.Min(body.Length, 1000)));
+                    return ParseAgentResponse(body);
+                }
+            }
+            catch (TaskCanceledException exception)
+            {
+                throw new TimeoutException("第三方模型在 120 秒内未返回。请检查模型接口是否支持 chat/completions 与 tool_calls，或缩短全局提示词/启用的 Unity 工具数量。", exception);
+            }
+            catch (System.Net.WebException exception)
+            {
+                throw new InvalidOperationException("第三方模型请求被网络层取消。请检查模型链接、网络/代理，以及接口是否支持当前请求中的 tools 字段。", exception);
             }
         }
     }
 
-    private static string BuildAgentRequestJson(string modelName, List<AgentMessage> messages)
+    private static string BuildAgentRequestJson(string modelName, List<AgentMessage> messages, string developerInstructions, bool requireToolCall)
     {
         using (var stream = new MemoryStream())
         {
@@ -343,7 +361,9 @@ internal static class CodexCustomApiClient
                 writer.WriteStartObject();
                 writer.WriteString("model", modelName);
                 writer.WritePropertyName("messages"); writer.WriteStartArray();
-                writer.WriteStartObject(); writer.WriteString("role", "system"); writer.WriteString("content", "You are a Unity Editor agent. Use the provided Unity tools when needed. Before calling a tool, explain the plan briefly. Use only available tools and interpret tool results before continuing."); writer.WriteEndObject();
+                var agentInstruction = "You are a Unity Editor agent. For any request that creates, modifies, deletes, saves, builds, tests, or inspects the Unity project, you MUST call the provided Unity tools. Never substitute a C# code snippet, manual steps, or a claimed result for an actual tool call. Do not claim an editor change succeeded unless a tool result confirms it. Use only available tools and interpret their results before giving the final answer.";
+                if (!string.IsNullOrWhiteSpace(developerInstructions)) agentInstruction += "\n\nProject developer instructions:\n" + developerInstructions;
+                writer.WriteStartObject(); writer.WriteString("role", "system"); writer.WriteString("content", agentInstruction); writer.WriteEndObject();
                 foreach (var message in messages) WriteAgentMessage(writer, message);
                 writer.WriteEndArray();
                 writer.WritePropertyName("tools"); writer.WriteStartArray();
@@ -359,7 +379,7 @@ internal static class CodexCustomApiClient
                         writer.WriteEndObject(); writer.WriteEndObject();
                     }
                 }
-                writer.WriteEndArray(); writer.WriteString("tool_choice", "auto"); writer.WriteBoolean("stream", false); writer.WriteEndObject();
+                writer.WriteEndArray(); writer.WriteString("tool_choice", requireToolCall ? "required" : "auto"); writer.WriteBoolean("stream", false); writer.WriteEndObject();
             }
             return Encoding.UTF8.GetString(stream.ToArray());
         }
@@ -395,5 +415,139 @@ internal static class CodexCustomApiClient
             }
             return reply;
         }
+    }
+}
+
+/// <summary>
+/// Common conversation/agent contract used by the Unity window. Providers own
+/// their transport and conversation storage, while the window owns rendering,
+/// approvals, and execution of Unity tools.
+/// </summary>
+internal interface ICodexAgentProvider
+{
+    bool UsesSharedCodexThreads { get; }
+    Task<CodexWorkspaceSnapshot> FetchWorkspaceAsync(string projectRoot);
+    Task<CodexThreadSummary> CreateConversationAsync(string projectRoot);
+    Task<List<CodexChatMessage>> ReadConversationAsync(string projectRoot, string conversationId);
+    Task RenameConversationAsync(string projectRoot, string conversationId, string name);
+    Task DeleteConversationAsync(string projectRoot, string conversationId);
+    Task SendAsync(AgentProviderRequest request, AgentProviderCallbacks callbacks);
+}
+
+internal sealed class AgentProviderRequest
+{
+    internal string ProjectRoot;
+    internal string ConversationId;
+    internal string Text;
+    internal string Model;
+    internal string Effort;
+    internal string DeveloperInstructions;
+}
+
+internal sealed class AgentProviderCallbacks
+{
+    internal Action<string> OnAssistantDelta;
+    internal Action<CodexApprovalRequest> OnFileApprovalRequested;
+    internal Action<CodexMcpElicitationRequest> OnMcpElicitationRequested;
+    internal Action<List<CodexFileChange>> OnFileChanges;
+    internal Func<CodexCustomApiClient.AgentToolCall, Task<string>> ExecuteUnityToolAsync;
+}
+
+internal static class CodexAgentProviderFactory
+{
+    private static readonly ICodexAgentProvider LocalCodex = new CodexAppServerAgentProvider();
+    private static readonly ICodexAgentProvider ApiKey = new OpenAiCompatibleAgentProvider();
+    internal static ICodexAgentProvider Current => CodexApprovalPreferences.UsesApiKeyLogin ? ApiKey : LocalCodex;
+}
+
+internal sealed class CodexAppServerAgentProvider : ICodexAgentProvider
+{
+    public bool UsesSharedCodexThreads => true;
+    public Task<CodexWorkspaceSnapshot> FetchWorkspaceAsync(string projectRoot) => CodexAppServerClient.FetchAsync(projectRoot);
+    public Task<CodexThreadSummary> CreateConversationAsync(string projectRoot) => CodexAppServerClient.CreateThreadAsync(projectRoot);
+    public Task<List<CodexChatMessage>> ReadConversationAsync(string projectRoot, string conversationId) => CodexAppServerClient.ReadThreadAsync(projectRoot, conversationId);
+    public Task RenameConversationAsync(string projectRoot, string conversationId, string name) => CodexAppServerClient.RenameThreadAsync(projectRoot, conversationId, name);
+    public Task DeleteConversationAsync(string projectRoot, string conversationId) => CodexAppServerClient.DeleteThreadAsync(projectRoot, conversationId);
+    public Task SendAsync(AgentProviderRequest request, AgentProviderCallbacks callbacks)
+    {
+        return CodexAppServerClient.SendMessageAsync(request.ProjectRoot, request.ConversationId, request.Text, request.Model, request.Effort, request.DeveloperInstructions, callbacks.OnAssistantDelta, callbacks.OnFileApprovalRequested, callbacks.OnMcpElicitationRequested, callbacks.OnFileChanges);
+    }
+}
+
+internal sealed class OpenAiCompatibleAgentProvider : ICodexAgentProvider
+{
+    public bool UsesSharedCodexThreads => false;
+    public Task<CodexWorkspaceSnapshot> FetchWorkspaceAsync(string projectRoot) => Task.FromResult(new CodexWorkspaceSnapshot { Threads = CodexApiChatStore.GetSummaries() });
+    public Task<CodexThreadSummary> CreateConversationAsync(string projectRoot)
+    {
+        var thread = CodexApiChatStore.Create();
+        return Task.FromResult(new CodexThreadSummary { Id = thread.Id, Name = thread.Name });
+    }
+    public Task<List<CodexChatMessage>> ReadConversationAsync(string projectRoot, string conversationId)
+    {
+        var result = new List<CodexChatMessage>();
+        foreach (var message in CodexApiChatStore.Read(conversationId)) result.Add(new CodexChatMessage { Sender = message.Role == "user" ? "你" : "assistant", Text = message.Content });
+        return Task.FromResult(result);
+    }
+    public Task RenameConversationAsync(string projectRoot, string conversationId, string name) { CodexApiChatStore.Rename(conversationId, name); return Task.CompletedTask; }
+    public Task DeleteConversationAsync(string projectRoot, string conversationId) { CodexApiChatStore.Delete(conversationId); return Task.CompletedTask; }
+    public async Task SendAsync(AgentProviderRequest request, AgentProviderCallbacks callbacks)
+    {
+        await CodexCustomApiClient.LogAvailableModelsAsync(CodexApprovalPreferences.CustomApiKey, CodexApprovalPreferences.CustomApiModelUrl);
+        var history = new List<CodexCustomApiClient.AgentMessage>();
+        foreach (var message in CodexApiChatStore.Read(request.ConversationId)) history.Add(new CodexCustomApiClient.AgentMessage { Role = message.Role, Content = message.Content });
+        history.Add(new CodexCustomApiClient.AgentMessage { Role = "user", Content = request.Text });
+        CodexApiChatStore.Append(request.ConversationId, "user", request.Text);
+        var finalText = string.Empty;
+        const int maxToolRounds = 8;
+        for (var round = 0; round < maxToolRounds; round++)
+        {
+            var requireToolCall = round == 0 && LooksLikeUnityOperation(request.Text);
+            Debug.Log("[Codex Unity API Agent] Round " + (round + 1) + ": tool_choice=" + (requireToolCall ? "required" : "auto") + ".");
+            CodexCustomApiClient.AgentResponse reply;
+            try
+            {
+                reply = await CodexCustomApiClient.CreateAgentCompletionAsync(CodexApprovalPreferences.CustomApiKey, CodexApprovalPreferences.CustomApiModelName, CodexApprovalPreferences.CustomApiModelUrl, history, request.DeveloperInstructions, requireToolCall);
+            }
+            catch (InvalidOperationException error) when (requireToolCall && error.Message.IndexOf("Thinking mode does not support this tool_choice", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                Debug.LogWarning("[Codex Unity API Agent] 当前模型的 Thinking mode 不支持 tool_choice=required；已自动以 tool_choice=auto 重试。该模型可能仍会只输出文本而不调用 Unity 工具。");
+                requireToolCall = false;
+                reply = await CodexCustomApiClient.CreateAgentCompletionAsync(CodexApprovalPreferences.CustomApiKey, CodexApprovalPreferences.CustomApiModelName, CodexApprovalPreferences.CustomApiModelUrl, history, request.DeveloperInstructions, false);
+            }
+            Debug.Log("[Codex Unity API Agent] Round " + (round + 1) + " response: tool_calls=" + reply.ToolCalls.Count + ", text=" + (!string.IsNullOrWhiteSpace(reply.Content)) + ".");
+            if (!string.IsNullOrWhiteSpace(reply.Content)) { finalText += (finalText.Length == 0 ? string.Empty : "\n") + reply.Content; callbacks.OnAssistantDelta?.Invoke(reply.Content); }
+            history.Add(new CodexCustomApiClient.AgentMessage { Role = "assistant", Content = reply.Content, ToolCalls = reply.ToolCalls });
+            if (reply.ToolCalls == null || reply.ToolCalls.Count == 0)
+            {
+                if (round == 0 && LooksLikeUnityOperation(request.Text))
+                {
+                    const string note = "\n\n[Unity Agent 提示] 当前模型没有返回 tool_calls，因此未执行任何 Unity 操作。该接口的 Thinking mode 不支持强制工具调用；请切换到支持 Function Calling 的非 Thinking 模型，或确认服务商支持 tools + tool_choice。";
+                    finalText += note;
+                    callbacks.OnAssistantDelta?.Invoke(note);
+                }
+                if (string.IsNullOrWhiteSpace(finalText)) finalText = "任务已完成，但 API 未返回文本内容。";
+                CodexApiChatStore.Append(request.ConversationId, "assistant", finalText);
+                Debug.Log("[Codex Unity API Agent] Reply completed after " + (round + 1) + " round(s).");
+                return;
+            }
+            if (callbacks.ExecuteUnityToolAsync == null) throw new InvalidOperationException("API Agent has no Unity tool executor.");
+            foreach (var call in reply.ToolCalls)
+            {
+                Debug.Log("[Codex Unity API Agent] Requested Unity tool: " + call.Name + ".");
+                var output = await callbacks.ExecuteUnityToolAsync(call);
+                history.Add(new CodexCustomApiClient.AgentMessage { Role = "tool", ToolCallId = call.Id, Content = output });
+            }
+        }
+        throw new InvalidOperationException("API Agent 在 " + maxToolRounds + " 轮工具调用后仍未完成，已安全停止。");
+    }
+
+    private static bool LooksLikeUnityOperation(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return false;
+        var lower = text.ToLowerInvariant();
+        var markers = new[] { "创建", "生成", "修改", "删除", "保存", "构建", "编译", "运行", "测试", "检查", "查询", "读取", "打开", "添加", "移动", "create", "modify", "delete", "save", "build", "run", "test", "inspect", "read", "open", "add", "move" };
+        foreach (var marker in markers) if (lower.Contains(marker)) return true;
+        return false;
     }
 }
