@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
 using UnityEditor;
+using UnityEditor.UIElements;
 using UnityEngine;
 using UnityEngine.UIElements;
 using EditorPopupWindow = UnityEditor.PopupWindow;
@@ -513,6 +514,7 @@ public sealed partial class CodexWindow
         AddApprovalSetting(approvals, "始终允许 MCP 调用", "自动批准蓝色的 MCP 调用审核卡。", CodexApprovalPreferences.AlwaysAllowMcpCalls, value => CodexApprovalPreferences.AlwaysAllowMcpCalls = value);
         AddApprovalSetting(approvals, "始终允许 API 操作", "自动批准棕色的 Unity API 操作审核卡。", CodexApprovalPreferences.AlwaysAllowApiOperations, value => CodexApprovalPreferences.AlwaysAllowApiOperations = value);
         settings.Add(approvals);
+        AddConversationAppearanceSettings(settings);
         AddGlobalPromptSettings(settings);
         AddMcpToolSettings(settings);
         AddCustomApiSettings(settings);
@@ -528,6 +530,48 @@ public sealed partial class CodexWindow
         toggle.RegisterValueChangedCallback(evt => save(evt.newValue));
         parent.Add(toggle);
         parent.Add(new Label(help) { style = { marginLeft = 22, fontSize = 10, opacity = .7f } });
+    }
+    private void AddConversationAppearanceSettings(VisualElement parent)
+    {
+        var card = new VisualElement { style = { backgroundColor = new Color(.16f, .16f, .16f), paddingLeft = 10, paddingRight = 10, paddingTop = 9, paddingBottom = 10, marginTop = 10 } };
+        card.Add(new Label("对话区域") { style = { unityFontStyleAndWeight = FontStyle.Bold } });
+        card.Add(new Label("输入框默认显示两行；内容增加时会增长到上限，之后可在框内滚动。颜色会用于后续渲染的聊天消息。") { style = { fontSize = 10, opacity = .7f, whiteSpace = WhiteSpace.Normal, marginTop = 2 } });
+        var maxLines = new IntegerField("输入框最大行数") { value = CodexApprovalPreferences.ComposerMaxLines, style = { marginTop = 8 } };
+        maxLines.RegisterValueChangedCallback(evt =>
+        {
+            var clamped = Mathf.Clamp(evt.newValue, 2, 12);
+            if (clamped != evt.newValue) maxLines.SetValueWithoutNotify(clamped);
+            CodexApprovalPreferences.ComposerMaxLines = clamped;
+            UpdateComposerHeight();
+        });
+        var userColor = new ColorField("用户消息背景色") { value = CodexApprovalPreferences.UserMessageColor, style = { marginTop = 5 } };
+        userColor.RegisterValueChangedCallback(evt => CodexApprovalPreferences.UserMessageColor = evt.newValue);
+        var assistantColor = new ColorField("AI 消息背景色") { value = CodexApprovalPreferences.AssistantMessageColor, style = { marginTop = 5 } };
+        assistantColor.RegisterValueChangedCallback(evt => CodexApprovalPreferences.AssistantMessageColor = evt.newValue);
+        card.Add(maxLines); card.Add(userColor); card.Add(assistantColor);
+        parent.Add(card);
+    }
+
+    private void UpdateComposerHeight()
+    {
+        if (messageInput == null || composerRow == null || sendButton == null) return;
+        const float lineHeight = 20f;
+        const float chromeHeight = 2f;
+        var availableWidth = messageInput.contentRect.width;
+        if (availableWidth <= 1f) availableWidth = messageInput.resolvedStyle.width;
+        if (availableWidth <= 1f) availableWidth = 360f;
+        var charactersPerLine = Mathf.Max(12, Mathf.FloorToInt((availableWidth - 18f) / 7.5f));
+        var visualLines = 0;
+        var value = messageInput.value ?? string.Empty;
+        var paragraphs = value.Replace("\r", string.Empty).Split('\n');
+        foreach (var paragraph in paragraphs) visualLines += Mathf.Max(1, Mathf.CeilToInt(paragraph.Length / (float)charactersPerLine));
+        visualLines = Mathf.Clamp(visualLines, 2, CodexApprovalPreferences.ComposerMaxLines);
+        var height = visualLines * lineHeight + chromeHeight;
+        messageInput.style.height = height;
+        messageInput.style.minHeight = height;
+        messageInput.style.maxHeight = height;
+        composerRow.style.height = height;
+        sendButton.style.height = height;
     }
     private void AddGlobalPromptSettings(VisualElement parent)
     {

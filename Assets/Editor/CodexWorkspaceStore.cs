@@ -31,6 +31,9 @@ internal static class CodexApprovalPreferences
     internal static bool AlwaysAllowApiOperations { get => EditorPrefs.GetBool(Prefix + "Api", false); set => EditorPrefs.SetBool(Prefix + "Api", value); }
     internal static bool GlobalPromptEnabled { get => EditorPrefs.GetBool(Prefix + "GlobalPromptEnabled", false); set => EditorPrefs.SetBool(Prefix + "GlobalPromptEnabled", value); }
     internal static string GlobalPrompt { get => EditorPrefs.GetString(Prefix + "GlobalPrompt", string.Empty); set => EditorPrefs.SetString(Prefix + "GlobalPrompt", value ?? string.Empty); }
+    internal static int ComposerMaxLines { get => Mathf.Clamp(EditorPrefs.GetInt(Prefix + "ComposerMaxLines", 4), 2, 12); set => EditorPrefs.SetInt(Prefix + "ComposerMaxLines", Mathf.Clamp(value, 2, 12)); }
+    internal static Color UserMessageColor { get => ReadColor("UserMessageColor", new Color(.24f, .24f, .24f, 1f)); set => WriteColor("UserMessageColor", value); }
+    internal static Color AssistantMessageColor { get => ReadColor("AssistantMessageColor", new Color(.10f, .10f, .10f, 1f)); set => WriteColor("AssistantMessageColor", value); }
     internal static string CustomApiModelName { get => EditorPrefs.GetString(Prefix + "CustomApiModelName", string.Empty); set => EditorPrefs.SetString(Prefix + "CustomApiModelName", value ?? string.Empty); }
     internal static string CustomApiModelUrl { get => EditorPrefs.GetString(Prefix + "CustomApiModelUrl", string.Empty); set => EditorPrefs.SetString(Prefix + "CustomApiModelUrl", value ?? string.Empty); }
     internal static string CustomApiKey { get => SessionState.GetString(Prefix + "CustomApiKey", string.Empty); set => SessionState.SetString(Prefix + "CustomApiKey", value ?? string.Empty); }
@@ -41,6 +44,13 @@ internal static class CodexApprovalPreferences
     // custom-model path. This is a plugin preference, not an account credential.
     internal static string LoginMode { get => EditorPrefs.GetString(Prefix + "LoginMode", string.Empty); set => EditorPrefs.SetString(Prefix + "LoginMode", value ?? string.Empty); }
     internal static bool UsesApiKeyLogin => string.Equals(LoginMode, "api", StringComparison.Ordinal);
+
+    private static Color ReadColor(string name, Color fallback)
+    {
+        var stored = EditorPrefs.GetString(Prefix + name, ColorUtility.ToHtmlStringRGBA(fallback));
+        return ColorUtility.TryParseHtmlString("#" + stored.TrimStart('#'), out var color) ? color : fallback;
+    }
+    private static void WriteColor(string name, Color color) => EditorPrefs.SetString(Prefix + name, ColorUtility.ToHtmlStringRGBA(color));
 }
 
 /// In-memory data only; credentials and tokens are never stored here.

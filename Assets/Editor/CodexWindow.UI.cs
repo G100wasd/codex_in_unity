@@ -10,6 +10,7 @@ public sealed partial class CodexWindow
     private const float SidebarWidth = 216f;
     private ScrollView conversation, threadList;
     private TextField messageInput;
+    private VisualElement composerRow;
     private Button sendButton;
     private Label activeThreadLabel, accountLabel, quotaLabel, mcpLabel, mcpCategoryLabel;
     private VisualElement accountPanel, mcpPanel, quotaFill, mcpCategories, mcpCategoryPanel, mainPanel;
@@ -95,7 +96,6 @@ public sealed partial class CodexWindow
         messageInput = new TextField { multiline = true, isDelayed = false, verticalScrollerVisibility = ScrollerVisibility.Auto };
         messageInput.style.height = 42;
         messageInput.style.minHeight = 42;
-        messageInput.style.maxHeight = 42;
         messageInput.style.whiteSpace = WhiteSpace.Normal; 
         messageInput.style.flexGrow = 1;
         messageInput.style.flexShrink = 1;
@@ -110,10 +110,12 @@ public sealed partial class CodexWindow
                 SendMessage();
             }
         });
+        messageInput.RegisterValueChangedCallback(_ => UpdateComposerHeight());
+        messageInput.RegisterCallback<GeometryChangedEvent>(_ => UpdateComposerHeight());
         var composer = new VisualElement { style = { flexDirection = FlexDirection.Column, flexShrink = 0, marginTop = 8 } };
-        var row = new VisualElement { style = { flexDirection = FlexDirection.Row, height = 42, flexShrink = 0 } };
-        row.Add(messageInput); sendButton = new Button(SendMessage) { text = "↑", tooltip = "发送", style = { height = 42, width = 36, flexShrink = 0, marginLeft = 6 } }; 
-        row.Add(sendButton); composer.Add(row);
+        composerRow = new VisualElement { style = { flexDirection = FlexDirection.Row, height = 42, flexShrink = 0 } };
+        composerRow.Add(messageInput); sendButton = new Button(SendMessage) { text = "↑", tooltip = "发送", style = { height = 42, width = 36, flexShrink = 0, marginLeft = 6 } }; 
+        composerRow.Add(sendButton); composer.Add(composerRow);
         var options = new VisualElement { style = { flexDirection = FlexDirection.Row, height = 22, flexShrink = 0, marginTop = 6 } }; 
         if (!CodexApprovalPreferences.UsesApiKeyLogin)
         {
@@ -140,6 +142,7 @@ public sealed partial class CodexWindow
         var categoryScroll = new ScrollView { style = { flexGrow = 1, marginTop = 6 } };
         mcpCategoryLabel = new Label { style = { whiteSpace = WhiteSpace.Normal, fontSize = 10 } }; categoryScroll.Add(mcpCategoryLabel); mcpCategoryPanel.Add(categoryScroll);
         main.Add(mcpCategoryPanel);
+        main.schedule.Execute(UpdateComposerHeight);
         main.RegisterCallback<PointerDownEvent>(evt =>
         {
             if (mcpCategoryPanel.style.display == DisplayStyle.None) return;
@@ -155,14 +158,26 @@ public sealed partial class CodexWindow
             !string.Equals(sender, "assistant", System.StringComparison.OrdinalIgnoreCase)) return sender;
         return string.IsNullOrWhiteSpace(CodexApprovalPreferences.CustomApiModelName) ? "自定义模型" : CodexApprovalPreferences.CustomApiModelName;
     }
-    private static VisualElement CreateMessage(string sender, string text) { var box = new VisualElement { style = { marginBottom = 8, paddingLeft = 8, paddingTop = 6, paddingBottom = 6 } }; box.Add(new Label(GetChatSenderDisplayName(sender))); box.Add(new Label(text) { style = { whiteSpace = WhiteSpace.Normal } }); return box; }
+    private static VisualElement CreateMessage(string sender, string text) { var box = CreateChatBubble(sender); box.Add(new Label(GetChatSenderDisplayName(sender))); box.Add(new Label(text) { style = { whiteSpace = WhiteSpace.Normal } }); return box; }
     private static VisualElement CreateStreamingMessage(string sender, out Label content)
     {
-        var box = new VisualElement { style = { marginBottom = 8, paddingLeft = 8, paddingTop = 6, paddingBottom = 6 } };
+        var box = CreateChatBubble(sender);
         box.Add(new Label(GetChatSenderDisplayName(sender)));
         content = new Label("正在生成回复…") { style = { whiteSpace = WhiteSpace.Normal } };
         box.Add(content);
         return box;
+    }
+    private static VisualElement CreateChatBubble(string sender)
+    {
+        var isUser = string.Equals(sender, "你", System.StringComparison.OrdinalIgnoreCase) || string.Equals(sender, "user", System.StringComparison.OrdinalIgnoreCase);
+        return new VisualElement
+        {
+            style =
+            {
+                marginBottom = 8, paddingLeft = 8, paddingRight = 8, paddingTop = 6, paddingBottom = 6,
+                backgroundColor = isUser ? CodexApprovalPreferences.UserMessageColor : CodexApprovalPreferences.AssistantMessageColor
+            }
+        };
     }
     private static VisualElement CreateApprovalCard(CodexApprovalRequest request)
     {
