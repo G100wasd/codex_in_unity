@@ -1,5 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Net.Http;
+using System.Net.Http.Headers;
+using System.Text;
+using System.Text.Json;
+using System.Threading.Tasks;
 using UnityEditor;
 using UnityEngine;
 
@@ -12,6 +18,8 @@ using UnityEngine;
 [Serializable] public sealed class CodexModelOption { public string Id; public string DisplayName; public string DefaultEffort; public List<string> SupportedEfforts = new List<string>(); }
 [Serializable] public sealed class CodexAccountInfo { public bool IsLoggedIn; public string Email; public string PlanType; }
 [Serializable] public sealed class CodexWorkspaceSnapshot { public CodexAccountInfo Account = new CodexAccountInfo(); public List<CodexThreadSummary> Threads = new List<CodexThreadSummary>(); public List<CodexModelOption> Models = new List<CodexModelOption>(); public string Error; }
+[Serializable] public sealed class CodexApiChatMessage { public string Role; public string Content; }
+[Serializable] public sealed class CodexApiChatThread { public string Id; public string Name; public List<CodexApiChatMessage> Messages = new List<CodexApiChatMessage>(); }
 
 /// Project-local persisted choices for the three explicit "always allow" options.
 /// They never contain credentials and default to false.
@@ -29,6 +37,10 @@ internal static class CodexApprovalPreferences
     // This only records that the project has passed this plugin's welcome screen.
     // It never represents, reads, or modifies the user's Codex account session.
     internal static bool HasCompletedLoginSetup { get => EditorPrefs.GetBool(Prefix + "HasCompletedLoginSetup", false); set => EditorPrefs.SetBool(Prefix + "HasCompletedLoginSetup", value); }
+    // "local" reuses Codex's official desktop login; "api" selects the future
+    // custom-model path. This is a plugin preference, not an account credential.
+    internal static string LoginMode { get => EditorPrefs.GetString(Prefix + "LoginMode", string.Empty); set => EditorPrefs.SetString(Prefix + "LoginMode", value ?? string.Empty); }
+    internal static bool UsesApiKeyLogin => string.Equals(LoginMode, "api", StringComparison.Ordinal);
 }
 
 /// In-memory data only; credentials and tokens are never stored here.
@@ -79,5 +91,309 @@ public sealed class CodexWorkspaceStore
     {
         Snapshot.Threads.RemoveAll(item => item.Id == threadId);
         Set(Snapshot);
+    }
+}
+
+/// <summary>Session-local chat pool for API Key mode. It is intentionally not a Codex Thread.</summary>
+internal static class CodexApiChatStore
+{
+    [Serializable] private sealed class State { public List<CodexApiChatThread> Threads = new List<CodexApiChatThread>(); }
+    private static string Key => "CodexUnity.ApiChats." + Application.dataPath.Replace(':', '_').Replace('\\', '_').Replace('/', '_');
+    private static State state;
+    private static State Current
+    {
+        get
+        {
+            if (state != null) return state;
+            try { state = JsonUtility.FromJson<State>(SessionState.GetString(Key, string.Empty)); } catch { }
+            return state ?? (state = new State());
+        }
+    }
+    private static void Save() { SessionState.SetString(Key, JsonUtility.ToJson(Current)); }
+    internal static List<CodexThreadSummary> GetSummaries() => Current.Threads.ConvertAll(item => new CodexThreadSummary { Id = item.Id, Name = item.Name, Preview = item.Messages.Count == 0 ? string.Empty : item.Messages[item.Messages.Count - 1].Content });
+    internal static CodexApiChatThread Create()
+    {
+        var thread = new CodexApiChatThread { Id = "api-" + Guid.NewGuid().ToString("N"), Name = "新聊天" };
+        Current.Threads.Insert(0, thread); Save(); return thread;
+    }
+    internal static List<CodexApiChatMessage> Read(string id)
+    {
+        var thread = Current.Threads.Find(item => item.Id == id);
+        return thread == null ? new List<CodexApiChatMessage>() : new List<CodexApiChatMessage>(thread.Messages);
+    }
+    internal static void Append(string id, string role, string content)
+    {
+        var thread = Current.Threads.Find(item => item.Id == id); if (thread == null) return;
+        thread.Messages.Add(new CodexApiChatMessage { Role = role, Content = content ?? string.Empty }); Save();
+    }
+    internal static void Rename(string id, string name)
+    {
+        var thread = Current.Threads.Find(item => item.Id == id); if (thread == null) return;
+        thread.Name = string.IsNullOrWhiteSpace(name) ? "新聊天" : name.Trim(); Save();
+    }
+    internal static void Delete(string id) { Current.Threads.RemoveAll(item => item.Id == id); Save(); }
+}
+
+/// <summary>
+/// Provider-neutral checks for OpenAI-compatible custom endpoints. Requests
+/// contain no prompt, and neither the API key nor request headers are logged.
+/// </summary>
+internal static class CodexCustomApiClient
+{
+    private static readonly HttpClient Client = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+
+    internal static async Task<string> ValidateAsync(string apiKey, string modelName, string modelUrl)
+    {
+        if (string.IsNullOrWhiteSpace(apiKey) || string.IsNullOrWhiteSpace(modelName) || string.IsNullOrWhiteSpace(modelUrl))
+            return "验证失败：API Key、模型名称和模型链接均不能为空。";
+        if (!TryBuildModelsEndpoint(modelUrl, out var endpoint, out var reason)) return "验证失败：" + reason;
+        try
+        {
+            using (var request = CreateRequest(endpoint, apiKey))
+            using (var response = await Client.SendAsync(request))
+            {
+                var body = await response.Content.ReadAsStringAsync();
+                var preview = string.IsNullOrWhiteSpace(body) ? "(空响应)" : body.Substring(0, Math.Min(body.Length, 500));
+                var details = "GET " + endpoint + " → HTTP " + (int)response.StatusCode + " " + response.ReasonPhrase + "\n响应摘要：" + preview;
+                Debug.Log("[Codex Unity API] Connectivity check\n" + details);
+                return response.IsSuccessStatusCode ? "连接验证成功。" : "连接验证失败：HTTP " + (int)response.StatusCode + "。详细信息已输出到 Console。";
+            }
+        }
+        catch (Exception error)
+        {
+            Debug.LogError("[Codex Unity API] Connectivity check failed for " + endpoint + ": " + error);
+            return "连接验证失败：" + error.Message;
+        }
+    }
+
+    internal static async Task<string> TryGetBalanceAsync(string apiKey, string modelUrl)
+    {
+        if (string.IsNullOrWhiteSpace(apiKey) || !TryBuildApiBase(modelUrl, out var apiBase, out _)) return "可用额度：未提供余额查询";
+        var candidates = new[] { new Uri(apiBase.GetLeftPart(UriPartial.Authority) + "/dashboard/billing/credit_grants"), new Uri(apiBase, "billing/credit_grants"), new Uri(apiBase, "balance") };
+        foreach (var endpoint in candidates)
+        {
+            try
+            {
+                using (var request = CreateRequest(endpoint, apiKey))
+                using (var response = await Client.SendAsync(request))
+                {
+                    if (!response.IsSuccessStatusCode) continue;
+                    var body = await response.Content.ReadAsStringAsync();
+                    if (TryExtractBalance(body, out var balance))
+                    {
+                        Debug.Log("[Codex Unity API] Balance endpoint available: " + endpoint);
+                        return "可用额度：" + balance;
+                    }
+                }
+            }
+            catch (Exception error) { Debug.Log("[Codex Unity API] Balance endpoint unavailable: " + endpoint + " (" + error.Message + ")"); }
+        }
+        return "可用额度：API 未提供可识别的余额查询";
+    }
+
+    /// <summary>Logs the model metadata returned by the configured endpoint without exposing the API key.</summary>
+    internal static async Task LogAvailableModelsAsync(string apiKey, string modelUrl)
+    {
+        if (string.IsNullOrWhiteSpace(apiKey))
+        {
+            Debug.LogWarning("<color=#F4C542>[Codex Unity API]</color> 无法读取模型目录：API Key 为空。");
+            return;
+        }
+        if (!TryBuildModelsEndpoint(modelUrl, out var endpoint, out var reason))
+        {
+            Debug.LogWarning("<color=#F4C542>[Codex Unity API]</color> 无法读取模型目录：" + reason);
+            return;
+        }
+        try
+        {
+            using (var request = CreateRequest(endpoint, apiKey))
+            using (var response = await Client.SendAsync(request))
+            {
+                var body = await response.Content.ReadAsStringAsync();
+                Debug.Log("<color=#5DADE2>[Codex Unity API]</color> <color=#D6EAF8>本次发送前读取模型目录</color> " + endpoint + " <color=#F4D03F>HTTP " + (int)response.StatusCode + "</color>");
+                if (!response.IsSuccessStatusCode)
+                {
+                    Debug.LogWarning("<color=#F4C542>[Codex Unity API]</color> 模型目录请求失败，当前聊天仍会继续走 Codex App Server。\n" + body.Substring(0, Math.Min(body.Length, 500)));
+                    return;
+                }
+                using (var document = JsonDocument.Parse(body))
+                {
+                    if (!document.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
+                    {
+                        Debug.LogWarning("<color=#F4C542>[Codex Unity API]</color> 响应不包含 data[] 模型列表。");
+                        return;
+                    }
+                    Debug.Log("<color=#5DADE2>[Codex Unity API]</color> <color=#58D68D>data[] 共 " + data.GetArrayLength() + " 个模型</color>");
+                    foreach (var model in data.EnumerateArray())
+                    {
+                        var id = GetJsonString(model, "id", "—");
+                        var owner = GetJsonString(model, "owned_by", "—");
+                        var type = GetJsonString(model, "object", "—");
+                        var created = GetJsonString(model, "created", "—");
+                        Debug.Log("<color=#58D68D>id: " + id + "</color>  <color=#F5B041>owned_by: " + owner + "</color>  <color=#AF7AC5>object: " + type + "</color>  <color=#AAB7B8>created: " + created + "</color>");
+                    }
+                }
+            }
+        }
+        catch (Exception error)
+        {
+            Debug.LogError("<color=#EC7063>[Codex Unity API]</color> 读取模型目录失败：" + error);
+        }
+    }
+
+    private static HttpRequestMessage CreateRequest(Uri endpoint, string apiKey)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, endpoint);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+        request.Headers.Accept.ParseAdd("application/json");
+        return request;
+    }
+    private static string GetJsonString(JsonElement element, string name, string fallback)
+    {
+        return element.TryGetProperty(name, out var value) ? value.ToString() : fallback;
+    }
+    private static bool TryBuildModelsEndpoint(string modelUrl, out Uri endpoint, out string reason)
+    {
+        endpoint = null;
+        if (!TryBuildApiBase(modelUrl, out var apiBase, out reason)) return false;
+        endpoint = modelUrl.TrimEnd('/').EndsWith("/models", StringComparison.OrdinalIgnoreCase) ? new Uri(modelUrl) : new Uri(apiBase, "models");
+        return true;
+    }
+    private static bool TryBuildApiBase(string modelUrl, out Uri apiBase, out string reason)
+    {
+        apiBase = null; reason = null;
+        if (!Uri.TryCreate(modelUrl, UriKind.Absolute, out var input) || (input.Scheme != Uri.UriSchemeHttps && input.Scheme != Uri.UriSchemeHttp))
+        {
+            reason = "模型链接必须是有效的 http:// 或 https:// URL。";
+            return false;
+        }
+        var path = input.AbsolutePath.TrimEnd('/');
+        if (path.EndsWith("/chat/completions", StringComparison.OrdinalIgnoreCase)) path = path.Substring(0, path.Length - "/chat/completions".Length);
+        else if (path.EndsWith("/models", StringComparison.OrdinalIgnoreCase)) path = path.Substring(0, path.Length - "/models".Length);
+        if (!path.EndsWith("/", StringComparison.Ordinal)) path += "/";
+        apiBase = new Uri(input.GetLeftPart(UriPartial.Authority) + path);
+        return true;
+    }
+    private static bool TryExtractBalance(string json, out string balance)
+    {
+        balance = null;
+        try { using (var document = JsonDocument.Parse(json)) return TryExtractBalance(document.RootElement, out balance); }
+        catch { return false; }
+    }
+    private static bool TryExtractBalance(JsonElement element, out string balance)
+    {
+        balance = null;
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var property in element.EnumerateObject())
+            {
+                var name = property.Name.ToLowerInvariant();
+                if ((name == "total_available" || name == "balance" || name == "remaining" || name == "available" || name == "credit") && (property.Value.ValueKind == JsonValueKind.Number || property.Value.ValueKind == JsonValueKind.String))
+                {
+                    balance = property.Value.ToString();
+                    return !string.IsNullOrWhiteSpace(balance);
+                }
+                if (TryExtractBalance(property.Value, out balance)) return true;
+            }
+        }
+        else if (element.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in element.EnumerateArray()) if (TryExtractBalance(item, out balance)) return true;
+        }
+        return false;
+    }
+
+    internal sealed class AgentMessage
+    {
+        internal string Role;
+        internal string Content;
+        internal string ToolCallId;
+        internal List<AgentToolCall> ToolCalls;
+    }
+    internal sealed class AgentToolCall { internal string Id; internal string Name; internal string Arguments; }
+    internal sealed class AgentResponse { internal string Content; internal List<AgentToolCall> ToolCalls = new List<AgentToolCall>(); }
+
+    /// <summary>Calls an OpenAI-compatible /chat/completions endpoint with the enabled Unity tools.</summary>
+    internal static async Task<AgentResponse> CreateAgentCompletionAsync(string apiKey, string modelName, string modelUrl, List<AgentMessage> messages)
+    {
+        if (string.IsNullOrWhiteSpace(apiKey) || string.IsNullOrWhiteSpace(modelName)) throw new InvalidOperationException("API Key 或模型名称为空。");
+        if (!TryBuildApiBase(modelUrl, out var apiBase, out var reason)) throw new InvalidOperationException(reason);
+        var endpoint = modelUrl.TrimEnd('/').EndsWith("/chat/completions", StringComparison.OrdinalIgnoreCase) ? new Uri(modelUrl) : new Uri(apiBase, "chat/completions");
+        var json = BuildAgentRequestJson(modelName, messages);
+        using (var request = new HttpRequestMessage(HttpMethod.Post, endpoint))
+        {
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+            request.Content = new StringContent(json, Encoding.UTF8, "application/json");
+            using (var response = await Client.SendAsync(request))
+            {
+                var body = await response.Content.ReadAsStringAsync();
+                Debug.Log("<color=#5DADE2>[Codex Unity API Agent]</color> POST " + endpoint + " <color=#F4D03F>HTTP " + (int)response.StatusCode + "</color>");
+                if (!response.IsSuccessStatusCode) throw new InvalidOperationException("第三方 API 返回 HTTP " + (int)response.StatusCode + "：" + body.Substring(0, Math.Min(body.Length, 1000)));
+                return ParseAgentResponse(body);
+            }
+        }
+    }
+
+    private static string BuildAgentRequestJson(string modelName, List<AgentMessage> messages)
+    {
+        using (var stream = new MemoryStream())
+        {
+            using (var writer = new Utf8JsonWriter(stream))
+            {
+                writer.WriteStartObject();
+                writer.WriteString("model", modelName);
+                writer.WritePropertyName("messages"); writer.WriteStartArray();
+                writer.WriteStartObject(); writer.WriteString("role", "system"); writer.WriteString("content", "You are a Unity Editor agent. Use the provided Unity tools when needed. Before calling a tool, explain the plan briefly. Use only available tools and interpret tool results before continuing."); writer.WriteEndObject();
+                foreach (var message in messages) WriteAgentMessage(writer, message);
+                writer.WriteEndArray();
+                writer.WritePropertyName("tools"); writer.WriteStartArray();
+                using (var toolsDocument = JsonDocument.Parse(CodexUnityMcpTools.GetEnabledToolDefinitionsJson()))
+                {
+                    foreach (var definition in toolsDocument.RootElement.EnumerateArray())
+                    {
+                        writer.WriteStartObject(); writer.WriteString("type", "function"); writer.WritePropertyName("function"); writer.WriteStartObject();
+                        writer.WriteString("name", GetJsonString(definition, "name", string.Empty));
+                        writer.WriteString("description", GetJsonString(definition, "description", string.Empty));
+                        writer.WritePropertyName("parameters");
+                        if (definition.TryGetProperty("inputSchema", out var schema)) schema.WriteTo(writer); else { writer.WriteStartObject(); writer.WriteEndObject(); }
+                        writer.WriteEndObject(); writer.WriteEndObject();
+                    }
+                }
+                writer.WriteEndArray(); writer.WriteString("tool_choice", "auto"); writer.WriteBoolean("stream", false); writer.WriteEndObject();
+            }
+            return Encoding.UTF8.GetString(stream.ToArray());
+        }
+    }
+    private static void WriteAgentMessage(Utf8JsonWriter writer, AgentMessage message)
+    {
+        writer.WriteStartObject(); writer.WriteString("role", message.Role);
+        if (message.Content == null) writer.WriteNull("content"); else writer.WriteString("content", message.Content);
+        if (message.Role == "tool") writer.WriteString("tool_call_id", message.ToolCallId);
+        if (message.ToolCalls != null && message.ToolCalls.Count > 0)
+        {
+            writer.WritePropertyName("tool_calls"); writer.WriteStartArray();
+            foreach (var call in message.ToolCalls)
+            {
+                writer.WriteStartObject(); writer.WriteString("id", call.Id); writer.WriteString("type", "function"); writer.WritePropertyName("function"); writer.WriteStartObject(); writer.WriteString("name", call.Name); writer.WriteString("arguments", call.Arguments ?? "{}"); writer.WriteEndObject(); writer.WriteEndObject();
+            }
+            writer.WriteEndArray();
+        }
+        writer.WriteEndObject();
+    }
+    private static AgentResponse ParseAgentResponse(string json)
+    {
+        using (var document = JsonDocument.Parse(json))
+        {
+            if (!document.RootElement.TryGetProperty("choices", out var choices) || choices.ValueKind != JsonValueKind.Array || choices.GetArrayLength() == 0) throw new InvalidOperationException("第三方 API 响应不包含 choices[0]。");
+            var message = choices[0].GetProperty("message");
+            var reply = new AgentResponse { Content = message.TryGetProperty("content", out var content) && content.ValueKind == JsonValueKind.String ? content.GetString() : string.Empty };
+            if (!message.TryGetProperty("tool_calls", out var calls) || calls.ValueKind != JsonValueKind.Array) return reply;
+            foreach (var call in calls.EnumerateArray())
+            {
+                if (!call.TryGetProperty("function", out var function)) continue;
+                reply.ToolCalls.Add(new AgentToolCall { Id = GetJsonString(call, "id", Guid.NewGuid().ToString("N")), Name = GetJsonString(function, "name", string.Empty), Arguments = GetJsonString(function, "arguments", "{}") });
+            }
+            return reply;
+        }
     }
 }

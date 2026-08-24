@@ -115,9 +115,13 @@ public sealed partial class CodexWindow
         row.Add(messageInput); sendButton = new Button(SendMessage) { text = "↑", tooltip = "发送", style = { height = 42, width = 36, flexShrink = 0, marginLeft = 6 } }; 
         row.Add(sendButton); composer.Add(row);
         var options = new VisualElement { style = { flexDirection = FlexDirection.Row, height = 22, flexShrink = 0, marginTop = 6 } }; 
-        modelMenu = new ToolbarMenu { text = "正在加载模型…" };
+        if (!CodexApprovalPreferences.UsesApiKeyLogin)
+        {
+            modelMenu = new ToolbarMenu { text = "正在加载模型…" };
+            options.Add(modelMenu);
+        }
+        else modelMenu = null;
         effortMenu = new ToolbarMenu { text = "思考：—" };
-        options.Add(modelMenu);
         options.Add(effortMenu); composer.Add(options); main.Add(composer);
 
         // Category details float over the right side of the chat area instead
@@ -144,11 +148,18 @@ public sealed partial class CodexWindow
         });
         return main;
     }
-    private static VisualElement CreateMessage(string sender, string text) { var box = new VisualElement { style = { marginBottom = 8, paddingLeft = 8, paddingTop = 6, paddingBottom = 6 } }; box.Add(new Label(sender)); box.Add(new Label(text) { style = { whiteSpace = WhiteSpace.Normal } }); return box; }
+    private static string GetChatSenderDisplayName(string sender)
+    {
+        if (!CodexApprovalPreferences.UsesApiKeyLogin) return sender;
+        if (!string.Equals(sender, "Codex", System.StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(sender, "assistant", System.StringComparison.OrdinalIgnoreCase)) return sender;
+        return string.IsNullOrWhiteSpace(CodexApprovalPreferences.CustomApiModelName) ? "自定义模型" : CodexApprovalPreferences.CustomApiModelName;
+    }
+    private static VisualElement CreateMessage(string sender, string text) { var box = new VisualElement { style = { marginBottom = 8, paddingLeft = 8, paddingTop = 6, paddingBottom = 6 } }; box.Add(new Label(GetChatSenderDisplayName(sender))); box.Add(new Label(text) { style = { whiteSpace = WhiteSpace.Normal } }); return box; }
     private static VisualElement CreateStreamingMessage(string sender, out Label content)
     {
         var box = new VisualElement { style = { marginBottom = 8, paddingLeft = 8, paddingTop = 6, paddingBottom = 6 } };
-        box.Add(new Label(sender));
+        box.Add(new Label(GetChatSenderDisplayName(sender)));
         content = new Label("正在生成回复…") { style = { whiteSpace = WhiteSpace.Normal } };
         box.Add(content);
         return box;

@@ -16,6 +16,11 @@ public sealed partial class CodexWindow : EditorWindow
         rootVisualElement.style.flexGrow = 1;
         rootVisualElement.style.backgroundColor = new Color(.12f, .12f, .12f);
 
+        // Projects created before the login chooser are safely treated as the
+        // original local-Codex flow, rather than accidentally enabling API mode.
+        if (CodexApprovalPreferences.HasCompletedLoginSetup && string.IsNullOrEmpty(CodexApprovalPreferences.LoginMode))
+            CodexApprovalPreferences.LoginMode = "local";
+
         if (!CodexApprovalPreferences.HasCompletedLoginSetup)
         {
             CreateLoginScreen();

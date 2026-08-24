@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.Json;
 using System.Threading.Tasks;
 using UnityEditor;
 using UnityEngine;
@@ -17,6 +18,8 @@ public sealed partial class CodexWindow
     private string selectedEffort;
     private bool isSelectingDefaultThread;
     private bool needsConversationRestore;
+    private bool isRefreshingApiBalance;
+    private string apiBalanceText = "可用额度：点击账户面板查询";
     private void OnEnable() => CodexWorkspaceStore.Instance.Changed += RefreshWorkspaceUi;
     private void OnDisable()
     {
@@ -29,6 +32,13 @@ public sealed partial class CodexWindow
         if (isRefreshing) return; isRefreshing = true;
         try
         {
+            if (CodexApprovalPreferences.UsesApiKeyLogin)
+            {
+                var apiSnapshot = new CodexWorkspaceSnapshot { Threads = CodexApiChatStore.GetSummaries() };
+                CodexWorkspaceStore.Instance.Set(apiSnapshot);
+                RestoreConversationWhenReady(apiSnapshot);
+                return;
+            }
             var fetched = await CodexAppServerClient.FetchAsync(GetProjectRoot());
             fetched = CodexWorkspaceStore.Instance.MergeKnownThreads(fetched);
             CodexUnityTaskRecovery.CancelIfThreadMissing(fetched);
@@ -54,17 +64,22 @@ public sealed partial class CodexWindow
         var selectedThread = state.Threads.Find(thread => thread.Id == selectedThreadId);
         if (selectedThread != null && activeThreadLabel != null) activeThreadLabel.text = selectedThread.Name;
         RefreshModelMenus(state);
-        accountLabel.text = !string.IsNullOrEmpty(state.Error) ? state.Error : state.Account.IsLoggedIn ? state.Account.Email + "\n套餐：" + state.Account.PlanType : "未登录 Codex";
+        var apiKeyMode = CodexApprovalPreferences.UsesApiKeyLogin;
+        accountLabel.text = apiKeyMode
+            ? "模型：" + (string.IsNullOrWhiteSpace(CodexApprovalPreferences.CustomApiModelName) ? "未配置" : CodexApprovalPreferences.CustomApiModelName)
+            : !string.IsNullOrEmpty(state.Error) ? state.Error : state.Account.IsLoggedIn ? state.Account.Email + "\n套餐：" + state.Account.PlanType : "未登录 Codex";
         if (quotaLabel != null && quotaFill != null)
         {
             // account/read currently supplies identity and plan but not a reliable remaining-quota value.
-            quotaLabel.text = "可用额度：暂无法从 Codex App Server 获取";
+            quotaLabel.text = apiKeyMode ? apiBalanceText : "可用额度：暂无法从 Codex App Server 获取";
             quotaFill.style.width = Length.Percent(0);
         }
         var hasSelection = selectedThread != null;
         if (newThreadButton != null) newThreadButton.SetEnabled(!recoveryLocked && !isCreatingThread);
         messageInput.SetEnabled(hasSelection && !recoveryLocked); sendButton.SetEnabled(hasSelection && !recoveryLocked);
-        modelMenu.SetEnabled(!recoveryLocked); effortMenu.SetEnabled(!recoveryLocked); if (newThreadButton != null) newThreadButton.SetEnabled(!recoveryLocked);
+        if (modelMenu != null) modelMenu.SetEnabled(!recoveryLocked);
+        if (effortMenu != null) effortMenu.SetEnabled(!recoveryLocked);
+        if (newThreadButton != null) newThreadButton.SetEnabled(!recoveryLocked);
         if (recoveryLocked && activeThreadLabel != null) activeThreadLabel.tooltip = CodexUnityTaskRecovery.BlockingMessage;
         RestoreConversationWhenReady(state);
     }
@@ -93,6 +108,16 @@ public sealed partial class CodexWindow
         RefreshWorkspaceUi();
         try
         {
+            if (CodexApprovalPreferences.UsesApiKeyLogin)
+            {
+                var apiMessages = CodexApiChatStore.Read(thread.Id);
+                if (selectedThreadId != thread.Id) return;
+                conversation.Clear();
+                foreach (var message in apiMessages) conversation.Add(CreateMessage(message.Role == "user" ? "你" : "assistant", message.Content));
+                ScrollConversationToLatest();
+                Debug.Log("[Codex Unity API] Loaded " + apiMessages.Count + " local API chat message(s) for " + thread.Id + ".");
+                return;
+            }
             var messages = await CodexAppServerClient.ReadThreadAsync(GetProjectRoot(), thread.Id);
             if (selectedThreadId != thread.Id) return;
             conversation.Clear();
@@ -114,6 +139,15 @@ public sealed partial class CodexWindow
         RefreshWorkspaceUi();
         try
         {
+            if (CodexApprovalPreferences.UsesApiKeyLogin)
+            {
+                var apiThread = CodexApiChatStore.Create();
+                var localSummary = new CodexThreadSummary { Id = apiThread.Id, Name = apiThread.Name };
+                isCreatingThread = false;
+                BeginWorkspaceRefresh();
+                SelectThread(localSummary);
+                return;
+            }
             var thread = await CodexAppServerClient.CreateThreadAsync(GetProjectRoot());
             var state = CodexWorkspaceStore.Instance.Snapshot;
             isCreatingThread = false;
@@ -137,6 +171,13 @@ public sealed partial class CodexWindow
     {
         try
         {
+            if (CodexApprovalPreferences.UsesApiKeyLogin)
+            {
+                CodexApiChatStore.Rename(thread.Id, name);
+                if (selectedThreadId == thread.Id) activeThreadLabel.text = name.Trim();
+                BeginWorkspaceRefresh();
+                return;
+            }
             await CodexAppServerClient.RenameThreadAsync(GetProjectRoot(), thread.Id, name);
             CodexWorkspaceStore.Instance.RenameThread(thread.Id, name.Trim());
             if (selectedThreadId == thread.Id) activeThreadLabel.text = name.Trim();
@@ -148,7 +189,13 @@ public sealed partial class CodexWindow
     private async void DeleteThread(CodexThreadSummary thread)
     {
         if (!EditorUtility.DisplayDialog("删除聊天", "确定永久删除“" + thread.Name + "”吗？此操作不可恢复。", "删除", "取消")) return;
-        try { await CodexAppServerClient.DeleteThreadAsync(GetProjectRoot(), thread.Id); CodexWorkspaceStore.Instance.RemoveThread(thread.Id); if (selectedThreadId == thread.Id) { selectedThreadId = null; conversation.Clear(); activeThreadLabel.text = "请选择或新建对话"; } Debug.Log("[Codex Unity] Deleted thread " + thread.Id + "."); BeginWorkspaceRefresh(); }
+        try
+        {
+            if (CodexApprovalPreferences.UsesApiKeyLogin) CodexApiChatStore.Delete(thread.Id);
+            else { await CodexAppServerClient.DeleteThreadAsync(GetProjectRoot(), thread.Id); CodexWorkspaceStore.Instance.RemoveThread(thread.Id); }
+            if (selectedThreadId == thread.Id) { selectedThreadId = null; conversation.Clear(); activeThreadLabel.text = "请选择或新建对话"; }
+            Debug.Log("[Codex Unity] Deleted thread " + thread.Id + "."); BeginWorkspaceRefresh();
+        }
         catch (Exception error) { Debug.LogError("[Codex Unity] Delete thread failed: " + error); }
     }
     private async void SendMessage()
@@ -157,12 +204,18 @@ public sealed partial class CodexWindow
         if (string.IsNullOrEmpty(text) || string.IsNullOrEmpty(selectedThreadId)) return;
         Debug.Log("[Codex Unity] Sending to thread " + selectedThreadId + ": " + text);
         messageInput.SetEnabled(false); sendButton.SetEnabled(false);
-        CodexUnityTaskRecovery.Begin(selectedThreadId, GetProjectRoot(), selectedModelId, selectedEffort);
+        if (!CodexApprovalPreferences.UsesApiKeyLogin) CodexUnityTaskRecovery.Begin(selectedThreadId, GetProjectRoot(), selectedModelId, selectedEffort);
         try
         {
             conversation.Add(CreateMessage("你", text));
             conversation.Add(CreateStreamingMessage("Codex", out var assistantText));
             ScrollConversationToLatest();
+            if (CodexApprovalPreferences.UsesApiKeyLogin)
+            {
+                await SendApiAgentMessageAsync(text, assistantText);
+                messageInput.value = string.Empty;
+                return;
+            }
             var hasReply = false;
             await CodexAppServerClient.SendMessageAsync(
                 GetProjectRoot(), selectedThreadId, text, selectedModelId, selectedEffort, CodexApprovalPreferences.GlobalPromptEnabled ? CodexApprovalPreferences.GlobalPrompt : null,
@@ -215,9 +268,79 @@ public sealed partial class CodexWindow
         }
         finally { RefreshWorkspaceUi(); }
     }
+    private async Task SendApiAgentMessageAsync(string text, Label assistantText)
+    {
+        await CodexCustomApiClient.LogAvailableModelsAsync(CodexApprovalPreferences.CustomApiKey, CodexApprovalPreferences.CustomApiModelUrl);
+        var history = new List<CodexCustomApiClient.AgentMessage>();
+        foreach (var message in CodexApiChatStore.Read(selectedThreadId)) history.Add(new CodexCustomApiClient.AgentMessage { Role = message.Role, Content = message.Content });
+        history.Add(new CodexCustomApiClient.AgentMessage { Role = "user", Content = text });
+        CodexApiChatStore.Append(selectedThreadId, "user", text);
+        var visibleReply = string.Empty;
+        const int MaxToolRounds = 8;
+        for (var round = 0; round < MaxToolRounds; round++)
+        {
+            var reply = await CodexCustomApiClient.CreateAgentCompletionAsync(CodexApprovalPreferences.CustomApiKey, CodexApprovalPreferences.CustomApiModelName, CodexApprovalPreferences.CustomApiModelUrl, history);
+            if (!string.IsNullOrWhiteSpace(reply.Content))
+            {
+                visibleReply += (visibleReply.Length == 0 ? string.Empty : "\n") + reply.Content;
+                assistantText.text = visibleReply;
+                ScrollConversationToLatest();
+            }
+            history.Add(new CodexCustomApiClient.AgentMessage { Role = "assistant", Content = reply.Content, ToolCalls = reply.ToolCalls });
+            if (reply.ToolCalls == null || reply.ToolCalls.Count == 0)
+            {
+                if (string.IsNullOrWhiteSpace(visibleReply)) visibleReply = "任务已完成，但 API 未返回文本内容。";
+                assistantText.text = visibleReply;
+                CodexApiChatStore.Append(selectedThreadId, "assistant", visibleReply);
+                Debug.Log("[Codex Unity API Agent] Reply completed after " + (round + 1) + " round(s).");
+                return;
+            }
+            foreach (var call in reply.ToolCalls)
+            {
+                var output = await ExecuteApiAgentToolAsync(call);
+                history.Add(new CodexCustomApiClient.AgentMessage { Role = "tool", ToolCallId = call.Id, Content = output });
+            }
+        }
+        throw new InvalidOperationException("API Agent 在 " + MaxToolRounds + " 轮工具调用后仍未完成，已安全停止。");
+    }
+    private static async Task<string> ExecuteApiAgentToolAsync(CodexCustomApiClient.AgentToolCall call)
+    {
+        if (string.IsNullOrWhiteSpace(call.Name) || !CodexUnityMcpTools.IsToolEnabled(call.Name)) return "Error: Unity tool is unavailable or disabled: " + call.Name;
+        if ((EditorApplication.isCompiling || EditorApplication.isUpdating) && call.Name != "unity_get_bridge_status" && call.Name != "unity_get_interrupted_operations" && call.Name != "unity_get_compilation_status") return "Error: Unity is compiling or updating assets; no tool was run.";
+        JsonElement arguments;
+        try { using (var document = JsonDocument.Parse(string.IsNullOrWhiteSpace(call.Arguments) ? "{}" : call.Arguments)) arguments = document.RootElement.Clone(); }
+        catch (Exception error) { return "Error: tool arguments are invalid JSON: " + error.Message; }
+        if (CodexUnityMcpTools.RequiresApiApproval(call.Name))
+        {
+            var allowed = await RequestMcpApiApprovalAsync(call.Name, CodexUnityMcpTools.GetMutationSummary(call.Name), arguments.GetRawText(), CodexUnityMcpTools.IsLongRunning(call.Name));
+            if (!allowed) return "Error: Unity API operation was denied by the user.";
+        }
+        Debug.Log("[Codex Unity API Agent] Calling Unity tool: " + call.Name + ".");
+        var output = await CodexUnityMcpTools.InvokeAsync(call.Name, arguments);
+        Debug.Log("[Codex Unity API Agent] Unity tool completed: " + call.Name + " (isError=" + output.IsError + ").");
+        return (output.IsError ? "Error: " : "Success: ") + output.Text;
+    }
     private void RefreshModelMenus(CodexWorkspaceSnapshot state)
     {
-        if (modelMenu == null || effortMenu == null) return;
+        if (effortMenu == null) return;
+        if (CodexApprovalPreferences.UsesApiKeyLogin)
+        {
+            // API providers do not have a shared model catalogue. The configured
+            // model name is therefore shown in the account panel, while this menu
+            // deliberately retains only the provider-neutral reasoning choice.
+            var apiEfforts = new[] { "none", "low", "medium", "high" };
+            if (!apiEfforts.Contains(selectedEffort)) selectedEffort = "medium";
+            effortMenu.menu.ClearItems();
+            foreach (var effort in apiEfforts)
+            {
+                var item = effort;
+                effortMenu.menu.AppendAction(DisplayEffort(item), _ => SelectEffort(item), _ => selectedEffort == item ? DropdownMenuAction.Status.Checked : DropdownMenuAction.Status.Normal);
+            }
+            effortMenu.text = DisplayEffort(selectedEffort);
+            return;
+        }
+
+        if (modelMenu == null) return;
         var selected = state.Models.Find(model => model.Id == selectedModelId);
         if (selected == null && state.Models.Count > 0)
         {
@@ -366,7 +489,32 @@ public sealed partial class CodexWindow
     {
         var show = accountPanel.style.display == DisplayStyle.None;
         accountPanel.style.display = show ? DisplayStyle.Flex : DisplayStyle.None;
-        if (show) { mcpPanel.style.display = DisplayStyle.None; mcpCategoryPanel.style.display = DisplayStyle.None; }
+        if (show)
+        {
+            mcpPanel.style.display = DisplayStyle.None; mcpCategoryPanel.style.display = DisplayStyle.None;
+            if (CodexApprovalPreferences.UsesApiKeyLogin) RefreshApiBalanceAsync();
+        }
+    }
+    private async void RefreshApiBalanceAsync()
+    {
+        if (isRefreshingApiBalance) return;
+        isRefreshingApiBalance = true;
+        apiBalanceText = "可用额度：正在查询…";
+        if (quotaLabel != null) quotaLabel.text = apiBalanceText;
+        try
+        {
+            apiBalanceText = await CodexCustomApiClient.TryGetBalanceAsync(CodexApprovalPreferences.CustomApiKey, CodexApprovalPreferences.CustomApiModelUrl);
+        }
+        catch (Exception error)
+        {
+            apiBalanceText = "可用额度：查询失败";
+            Debug.LogError("[Codex Unity API] Balance query failed: " + error);
+        }
+        finally
+        {
+            isRefreshingApiBalance = false;
+            if (CodexApprovalPreferences.UsesApiKeyLogin && quotaLabel != null) quotaLabel.text = apiBalanceText;
+        }
     }
     private void ToggleMcpPanel()
     {
@@ -514,22 +662,34 @@ public sealed partial class CodexWindow
     }
     private void AddCustomApiSettings(VisualElement parent)
     {
-        var officialLoginActive = CodexWorkspaceStore.Instance.Snapshot.Account.IsLoggedIn;
-        var apiCard = new VisualElement { style = { backgroundColor = new Color(.16f, .16f, .16f), paddingLeft = 10, paddingRight = 10, paddingTop = 9, paddingBottom = 10, marginTop = 10, opacity = officialLoginActive ? .45f : 1f } };
+        var apiKeyMode = CodexApprovalPreferences.UsesApiKeyLogin;
+        var apiCard = new VisualElement { style = { backgroundColor = new Color(.16f, .16f, .16f), paddingLeft = 10, paddingRight = 10, paddingTop = 9, paddingBottom = 10, marginTop = 10, opacity = apiKeyMode ? 1f : .45f } };
         apiCard.Add(new Label("自定义 API / 模型") { style = { unityFontStyleAndWeight = FontStyle.Bold } });
-        apiCard.Add(new Label(officialLoginActive ? "当前正在复用 Codex 官方登录，已禁用自定义 API 设置。" : "为后续自定义模型提供商扩展预留；尚不会替代当前官方 Codex 登录。") { style = { fontSize = 10, opacity = .7f, marginTop = 2 } });
-        var key = new TextField("API Key") { value = CodexApprovalPreferences.CustomApiKey, isPasswordField = true, style = { marginTop = 7 } };
+        apiCard.Add(new Label(apiKeyMode ? "当前使用 API Key 登录。此处配置用于后续自定义模型提供商扩展。" : "当前正在复用 Codex 官方登录，已禁用自定义 API 设置。") { style = { fontSize = 10, opacity = .7f, marginTop = 2 } });
+        var key = new TextField("API Key") { value = CodexApprovalPreferences.CustomApiKey, isPasswordField = false, style = { marginTop = 7 } };
         var model = new TextField("模型名称") { value = CodexApprovalPreferences.CustomApiModelName, style = { marginTop = 5 } };
         var url = new TextField("模型链接") { value = CodexApprovalPreferences.CustomApiModelUrl, style = { marginTop = 5 } };
         apiCard.Add(key); apiCard.Add(model); apiCard.Add(url);
-        apiCard.Add(new Button(() =>
+        var actions = new VisualElement { style = { flexDirection = FlexDirection.Row, marginTop = 8 } };
+        actions.Add(new Button(() =>
         {
             CodexApprovalPreferences.CustomApiKey = key.value;
             CodexApprovalPreferences.CustomApiModelName = model.value?.Trim() ?? string.Empty;
             CodexApprovalPreferences.CustomApiModelUrl = url.value?.Trim() ?? string.Empty;
             Debug.Log("[Codex Unity] Saved custom model metadata for this editor session.");
-        }) { text = "保存自定义模型设置", style = { marginTop = 8 } });
-        apiCard.SetEnabled(!officialLoginActive);
+        }) { text = "保存自定义模型设置", style = { flexGrow = 1 } });
+        actions.Add(new Button(() =>
+        {
+            key.SetValueWithoutNotify(string.Empty);
+            model.SetValueWithoutNotify(string.Empty);
+            url.SetValueWithoutNotify(string.Empty);
+            CodexApprovalPreferences.CustomApiKey = string.Empty;
+            CodexApprovalPreferences.CustomApiModelName = string.Empty;
+            CodexApprovalPreferences.CustomApiModelUrl = string.Empty;
+            Debug.Log("[Codex Unity] Cleared custom API/model configuration.");
+        }) { text = "⌫", tooltip = "清空 API Key、模型名称与模型链接", style = { width = 30, marginLeft = 6 } });
+        apiCard.Add(actions);
+        apiCard.SetEnabled(apiKeyMode);
         parent.Add(apiCard);
     }
     private void AddLoginSettings(VisualElement parent)
@@ -580,8 +740,7 @@ public sealed partial class CodexWindow
             tooltip = "复用已安装 Codex 的官方登录状态",
             style = { height = 32 }
         });
-        var apiKeyLogin = new Button { text = "通过 API Key 登录", tooltip = "自定义 API 登录将在后续版本提供", style = { height = 32, marginTop = 7, opacity = .55f } };
-        apiKeyLogin.SetEnabled(false);
+        var apiKeyLogin = new Button(BeginApiKeyLogin) { text = "通过 API Key 登录", tooltip = "配置 API Key、模型名称和模型链接", style = { height = 32, marginTop = 7 } };
         card.Add(apiKeyLogin);
         card.Add(new Label("本机 Codex 登录会复用官方登录状态；插件不会读取或解析你的凭证文件。")
         {
@@ -592,6 +751,7 @@ public sealed partial class CodexWindow
     }
     private void UseLocalCodexLogin()
     {
+        CodexApprovalPreferences.LoginMode = "local";
         CodexApprovalPreferences.HasCompletedLoginSetup = true;
         Debug.Log("[Codex Unity] Local Codex login selected; checking the official Codex session.");
         CreateGUI();
@@ -599,9 +759,103 @@ public sealed partial class CodexWindow
     private void ExitPluginLogin()
     {
         CodexApprovalPreferences.HasCompletedLoginSetup = false;
+        CodexApprovalPreferences.LoginMode = string.Empty;
         selectedThreadId = null;
         needsConversationRestore = false;
         Debug.Log("[Codex Unity] Returned to the plugin login screen. The local Codex account remains signed in.");
+        CreateGUI();
+    }
+    private void BeginApiKeyLogin()
+    {
+        if (!string.IsNullOrWhiteSpace(CodexApprovalPreferences.CustomApiKey) &&
+            !string.IsNullOrWhiteSpace(CodexApprovalPreferences.CustomApiModelName) &&
+            !string.IsNullOrWhiteSpace(CodexApprovalPreferences.CustomApiModelUrl))
+        {
+            CompleteApiKeyLogin();
+            return;
+        }
+
+        CreateApiKeySetupScreen();
+    }
+    private void CreateApiKeySetupScreen()
+    {
+        rootVisualElement.Clear();
+        var host = new VisualElement
+        {
+            style = { flexGrow = 1, justifyContent = Justify.Center, alignItems = Align.Center, paddingLeft = 24, paddingRight = 24 }
+        };
+        var card = new VisualElement
+        {
+            style =
+            {
+                width = 400, maxWidth = 400, backgroundColor = new Color(.16f, .16f, .16f),
+                paddingLeft = 22, paddingRight = 22, paddingTop = 20, paddingBottom = 20,
+                borderTopWidth = 1, borderBottomWidth = 1, borderLeftWidth = 1, borderRightWidth = 1,
+                borderTopColor = new Color(.29f, .29f, .29f), borderBottomColor = new Color(.29f, .29f, .29f),
+                borderLeftColor = new Color(.29f, .29f, .29f), borderRightColor = new Color(.29f, .29f, .29f)
+            }
+        };
+        card.Add(new Label("配置 API Key 登录") { style = { unityFontStyleAndWeight = FontStyle.Bold, fontSize = 18 } });
+        card.Add(new Label("请填写自定义模型信息。三个字段均不能为空。") { style = { marginTop = 7, marginBottom = 10, opacity = .75f } });
+        var key = new TextField("API Key") { value = CodexApprovalPreferences.CustomApiKey, isPasswordField = false };
+        var model = new TextField("模型名称") { value = CodexApprovalPreferences.CustomApiModelName, style = { marginTop = 6 } };
+        var url = new TextField("模型链接") { value = CodexApprovalPreferences.CustomApiModelUrl, style = { marginTop = 6 } };
+        card.Add(key); card.Add(model); card.Add(url);
+        var actions = new VisualElement { style = { flexDirection = FlexDirection.Row, marginTop = 12 } };
+        var connectionVerified = false;
+        var status = new Label("请先检测连接性。") { style = { fontSize = 10, marginTop = 7, opacity = .75f } };
+        var save = new Button(() =>
+        {
+            CodexApprovalPreferences.CustomApiKey = key.value?.Trim() ?? string.Empty;
+            CodexApprovalPreferences.CustomApiModelName = model.value?.Trim() ?? string.Empty;
+            CodexApprovalPreferences.CustomApiModelUrl = url.value?.Trim() ?? string.Empty;
+            CompleteApiKeyLogin();
+        }) { text = "保存并进入插件", style = { flexGrow = 1 } };
+        void RefreshSaveState()
+        {
+            connectionVerified = false;
+            save.SetEnabled(false);
+            status.text = "参数已变更，请重新检测连接性。";
+        }
+        key.RegisterValueChangedCallback(_ => RefreshSaveState());
+        model.RegisterValueChangedCallback(_ => RefreshSaveState());
+        url.RegisterValueChangedCallback(_ => RefreshSaveState());
+        save.SetEnabled(false);
+        Button test = null;
+        test = new Button(async () =>
+        {
+            test.SetEnabled(false);
+            status.text = "正在检测连接性…详细信息将输出到 Console。";
+            var checkedKey = key.value;
+            var checkedModel = model.value;
+            var checkedUrl = url.value;
+            var result = await CodexCustomApiClient.ValidateAsync(checkedKey, checkedModel, checkedUrl);
+            if (key.value != checkedKey || model.value != checkedModel || url.value != checkedUrl)
+            {
+                connectionVerified = false;
+                save.SetEnabled(false);
+                status.text = "参数已在检测期间变更，请重新检测连接性。";
+                test.SetEnabled(true);
+                return;
+            }
+            connectionVerified = result == "连接验证成功。";
+            save.SetEnabled(connectionVerified);
+            status.text = result;
+            test.SetEnabled(true);
+        }) { text = "检测连接性", style = { marginRight = 6 } };
+        actions.Add(test);
+        actions.Add(save);
+        actions.Add(new Button(CreateGUI) { text = "返回", style = { marginLeft = 6 } });
+        card.Add(actions); card.Add(status);
+        card.Add(new Label("API Key 仅保存在当前 Unity 编辑器会话中，不会写入项目文件或 EditorPrefs。") { style = { fontSize = 10, opacity = .65f, whiteSpace = WhiteSpace.Normal, marginTop = 12 } });
+        host.Add(card);
+        rootVisualElement.Add(host);
+    }
+    private void CompleteApiKeyLogin()
+    {
+        CodexApprovalPreferences.LoginMode = "api";
+        CodexApprovalPreferences.HasCompletedLoginSetup = true;
+        Debug.Log("[Codex Unity] API Key login configuration selected. Custom API/model settings are enabled.");
         CreateGUI();
     }
     private void RestoreChatPageIfNeeded()
